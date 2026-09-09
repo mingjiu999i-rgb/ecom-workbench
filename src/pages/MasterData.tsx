@@ -1,5 +1,5 @@
-import { ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { ChevronDown, ChevronRight, ExternalLink, Filter, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { Fragment, useState } from 'react'
 import { Field, Input, Select, Textarea } from '../components/Fields'
 import { Modal } from '../components/Overlay'
 import { createId, useWorkbench } from '../store/workbench'
@@ -14,6 +14,11 @@ export function MasterData() {
   const { data, update } = useWorkbench()
   const [tab, setTab] = useState<Tab>('clients')
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [skuClientId, setSkuClientId] = useState('')
+  const [skuProductId, setSkuProductId] = useState('')
+  const [skuLinkId, setSkuLinkId] = useState('')
+  const [skuQuery, setSkuQuery] = useState('')
+  const [expandedSkuLinks, setExpandedSkuLinks] = useState<Set<string>>(new Set())
   const isEdit = Boolean(draft?.id)
   const openNew = () => setDraft(tab === 'stores' ? { clientId: data.clients[0]?.id, platform: '拼多多' } : tab === 'products' ? { clientId: data.clients[0]?.id } : tab === 'links' ? { clientId: data.clients[0]?.id, storeId: '', productId: '' } : tab === 'skus' ? { productLinkId: '', productCostId: '', name: '', salePrice: 0 } : {})
 
@@ -51,6 +56,17 @@ export function MasterData() {
   const costsForSku = data.productCosts.filter(cost => cost.productId === selectedLink?.productId)
   const skuPrice = Number(draft?.salePrice || 0), skuCost = selectedCost?.totalCost || 0, skuProfit = skuPrice - skuCost
   const skuMargin = skuPrice > 0 ? (skuProfit / skuPrice) * 100 : 0
+  const skuFilterProducts = data.products.filter(product => !skuClientId || product.clientId === skuClientId)
+  const skuFilterLinks = data.productLinks.filter(link => (!skuClientId || link.clientId === skuClientId) && (!skuProductId || link.productId === skuProductId))
+  const filteredSkus = data.skus.filter(sku => {
+    const link = data.productLinks.find(x => x.id === sku.productLinkId)
+    const product = data.products.find(x => x.id === link?.productId)
+    const cost = data.productCosts.find(x => x.id === sku.productCostId)
+    const text = `${link?.linkId || ''} ${product?.name || ''} ${sku.name} ${cost?.skuCode || sku.skuId} ${cost?.specification || sku.specification}`.toLowerCase()
+    return (!skuClientId || product?.clientId === skuClientId) && (!skuProductId || product?.id === skuProductId) && (!skuLinkId || link?.id === skuLinkId) && (!skuQuery.trim() || text.includes(skuQuery.trim().toLowerCase()))
+  })
+  const groupedSkus = Array.from(new Set(filteredSkus.map(sku => sku.productLinkId))).map(linkId => ({ linkId, rows: filteredSkus.filter(sku => sku.productLinkId === linkId) }))
+  const toggleSkuGroup = (linkId: string) => setExpandedSkuLinks(current => { const next = new Set(current); if (next.has(linkId)) next.delete(linkId); else next.add(linkId); return next })
   const valid = tab === 'clients' ? draft?.name?.trim() : tab === 'products' ? draft?.clientId && draft.name?.trim() : tab === 'stores' ? draft?.clientId && draft.name?.trim() : tab === 'links' ? draft?.clientId && draft?.storeId && draft?.productId && draft?.linkId?.trim() : draft?.productLinkId && draft?.productCostId && draft?.name?.trim() && skuPrice > 0
 
   return <div className="page">
@@ -60,7 +76,7 @@ export function MasterData() {
       {tab === 'stores' && <SimpleTable headers={['店铺名称','所属甲方','平台','操作']} rows={data.stores.map(x => [<strong>{x.name}</strong>, data.clients.find(c => c.id === x.clientId)?.name || '—', <span className="tag">{x.platform}</span>, <Actions key="a" onEdit={() => setDraft(x)} onDelete={() => remove(x.id, x.name)} />])} />}
       {tab === 'products' && <SimpleTable headers={['产品名称','所属甲方','SKU 成本','关联链接','备注','操作']} rows={data.products.map(x => [<strong>{x.name}</strong>, data.clients.find(client => client.id === x.clientId)?.name || '未关联', `${data.productCosts.filter(cost => cost.productId === x.id).length} 条`, `${data.productLinks.filter(link => link.productId === x.id).length} 条`, x.remark || '—', <Actions key="a" onEdit={() => setDraft(x)} onDelete={() => remove(x.id, x.name)} />])} />}
       {tab === 'links' && <SimpleTable headers={['商品 ID','甲方 / 店铺','产品','URL','备注','操作']} rows={data.productLinks.map(x => [<strong>{x.linkId}</strong>, <div><div className="cell-main">{data.clients.find(c => c.id === x.clientId)?.name}</div><div className="cell-sub">{data.stores.find(s => s.id === x.storeId)?.name}</div></div>, data.products.find(p => p.id === x.productId)?.name || '—', x.url ? <a className="external" href={x.url} target="_blank" rel="noreferrer">打开<ExternalLink size={13} /></a> : '—', x.remark || '—', <Actions key="a" onEdit={() => setDraft(x)} onDelete={() => remove(x.id, x.linkId)} />])} />}
-      {tab === 'skus' && <SimpleTable headers={['商品 ID','售卖 SKU 名称','SKU 编码','成本','售价','毛利','毛利率','保本 ROI','操作']} rows={data.skus.map(sku => { const link = data.productLinks.find(x => x.id === sku.productLinkId); const cost = data.productCosts.find(x => x.id === sku.productCostId); const c = cost?.totalCost ?? sku.productCost; const profit = sku.salePrice - c; const margin = sku.salePrice > 0 ? profit / sku.salePrice * 100 : 0; return [<strong>{link?.linkId || '—'}</strong>, sku.name, <div><div className="cell-main">{cost?.skuCode || sku.skuId}</div><div className="cell-sub">{cost?.specification || sku.specification}</div></div>, money(c), money(sku.salePrice), <span className={profit < 0 ? 'negative' : 'positive'}>{money(profit)}</span>, percent(margin), calculatedBreakEvenRoi(sku.salePrice, c).toFixed(2), <Actions key="a" onEdit={() => setDraft({ ...sku, productCostId: cost?.id || '' })} onDelete={() => remove(sku.id, sku.name)} />] })} />}
+      {tab === 'skus' && <><section className="filter-bar master-sku-filter"><div className="filter-title"><Filter size={17} /><span>SKU 筛选</span></div><Select value={skuClientId} onChange={e => { setSkuClientId(e.target.value); setSkuProductId(''); setSkuLinkId('') }}><option value="">全部甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select><Select value={skuProductId} onChange={e => { setSkuProductId(e.target.value); setSkuLinkId('') }}><option value="">全部产品</option>{skuFilterProducts.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}</Select><Select value={skuLinkId} onChange={e => setSkuLinkId(e.target.value)}><option value="">全部商品 ID</option>{skuFilterLinks.map(link => <option key={link.id} value={link.id}>{link.linkId}</option>)}</Select><div className="search"><Search size={16} /><Input value={skuQuery} onChange={e => setSkuQuery(e.target.value)} placeholder="搜索商品 ID、SKU 名称或编码" /></div>{(skuClientId || skuProductId || skuLinkId || skuQuery) && <button className="text-button" onClick={() => { setSkuClientId(''); setSkuProductId(''); setSkuLinkId(''); setSkuQuery('') }}>清空</button>}</section><div className="table-scroll"><table><thead><tr><th>商品 ID / 分组</th><th>售卖 SKU 名称</th><th>SKU 编码</th><th>成本</th><th>售价</th><th>毛利</th><th>毛利率</th><th>保本 ROI</th><th>操作</th></tr></thead><tbody>{groupedSkus.map(group => { const link = data.productLinks.find(x => x.id === group.linkId); const product = data.products.find(x => x.id === link?.productId); const client = data.clients.find(x => x.id === product?.clientId); const expanded = expandedSkuLinks.has(group.linkId); return <Fragment key={group.linkId}><tr className="sku-group-row"><td colSpan={9}><button onClick={() => toggleSkuGroup(group.linkId)}>{expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}<strong>{link?.linkId || '未关联商品 ID'}</strong><span>{client?.name || '—'} · {product?.name || '—'}</span><em>{group.rows.length} 个 SKU</em></button></td></tr>{expanded && group.rows.map(sku => { const cost = data.productCosts.find(x => x.id === sku.productCostId); const c = cost?.totalCost ?? sku.productCost; const profit = sku.salePrice - c; const margin = sku.salePrice > 0 ? profit / sku.salePrice * 100 : 0; return <tr key={sku.id} className="sku-detail-row"><td><span className="cell-sub">已展开</span></td><td>{sku.name}</td><td><div className="cell-main">{cost?.skuCode || sku.skuId}</div><div className="cell-sub">{cost?.specification || sku.specification}</div></td><td>{money(c)}</td><td>{money(sku.salePrice)}</td><td><span className={profit < 0 ? 'negative' : 'positive'}>{money(profit)}</span></td><td>{percent(margin)}</td><td>{calculatedBreakEvenRoi(sku.salePrice, c).toFixed(2)}</td><td><Actions onEdit={() => setDraft({ ...sku, productCostId: cost?.id || '' })} onDelete={() => remove(sku.id, sku.name)} /></td></tr> })}</Fragment> })}</tbody></table>{!groupedSkus.length && <div className="empty"><strong>没有符合条件的 SKU</strong><span>请调整筛选条件或新增 SKU</span></div>}</div></>}
     </div></section>
     {draft && <Modal title={`${isEdit ? '编辑' : '新增'}${title}`} onClose={() => setDraft(null)}><div className="form-grid modal-body">
       {tab === 'clients' && <><Field label="名称" full><Input autoFocus value={draft.name || ''} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="备注" full><Textarea value={draft.remark || ''} onChange={e => setDraft({ ...draft, remark: e.target.value })} /></Field></>}
