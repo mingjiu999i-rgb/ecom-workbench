@@ -30,8 +30,8 @@ export const initialData: WorkbenchData = {
     { id: 'sku-b', productLinkId: 'link-b', name: '组合装', skuId: 'SKU-B01', specification: '2 件', salePrice: 89, finalPrice: 69, productCost: 39, shippingCost: 5, packagingCost: 1.5, otherCost: 0, currentRoi: 3.8, breakEvenRoi: 4.3, activity: '无活动', remark: '关注投产' },
   ],
   productCosts: [
-    { id: 'cost-a', skuCode: 'SKU-A01', specification: '1 件', totalCost: 23 },
-    { id: 'cost-b', skuCode: 'SKU-B01', specification: '2 件', totalCost: 45.5 },
+    { id: 'cost-a', clientId: 'client-a', productId: 'product-a', skuCode: 'SKU-A01', specification: '1 件', totalCost: 23 },
+    { id: 'cost-b', clientId: 'client-b', productId: 'product-b', skuCode: 'SKU-B01', specification: '2 件', totalCost: 45.5 },
   ],
   operations: [],
 }

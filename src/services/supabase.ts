@@ -12,13 +12,22 @@ const cloneInitialData = (): WorkbenchData => JSON.parse(JSON.stringify(initialD
 const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => ({
   ...value,
   productCosts: Array.isArray(value.productCosts)
-    ? value.productCosts
-    : (value.skus || []).map(sku => ({
+    ? value.productCosts.map(cost => {
+        const sku = (value.skus || []).find(item => item.skuId === cost.skuCode)
+        const link = (value.productLinks || []).find(item => item.id === sku?.productLinkId)
+        return { ...cost, clientId: cost.clientId || link?.clientId || '', productId: cost.productId || link?.productId || '' }
+      })
+    : (value.skus || []).map(sku => {
+      const link = (value.productLinks || []).find(item => item.id === sku.productLinkId)
+      return {
         id: `cost-${sku.id}`,
+        clientId: link?.clientId || '',
+        productId: link?.productId || '',
         skuCode: sku.skuId,
         specification: sku.specification,
         totalCost: Number(sku.productCost || 0) + Number(sku.shippingCost || 0) + Number(sku.packagingCost || 0) + Number(sku.otherCost || 0),
-      })),
+      }
+    }),
 })
 
 export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
