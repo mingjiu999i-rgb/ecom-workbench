@@ -57,13 +57,17 @@ export function ProductCosts() {
 function CostModal({ initial, onClose, onSave }: { initial: ProductCost; onClose: () => void; onSave: (item: ProductCost) => void }) {
   const { data } = useWorkbench()
   const [item, setItem] = useState(initial)
-  const linkedProductIds = new Set(data.productLinks.filter(link => link.clientId === item.clientId).map(link => link.productId))
-  const productsForClient = data.products.filter(product => linkedProductIds.size === 0 || linkedProductIds.has(product.id))
+  const productIdsForClient = (clientId: string) => new Set([
+    ...data.productLinks.filter(link => link.clientId === clientId).map(link => link.productId),
+    ...data.productCosts.filter(cost => cost.clientId === clientId).map(cost => cost.productId),
+  ])
+  const linkedProductIds = productIdsForClient(item.clientId)
+  const productsForClient = data.products.filter(product => linkedProductIds.has(product.id))
   const valid = item.clientId && item.productId && item.skuCode.trim() && item.specification.trim() && Number.isFinite(item.totalCost) && item.totalCost >= 0
   return <Modal title={`${item.id ? '编辑' : '新增'}产品成本`} onClose={onClose}>
     <div className="form-grid modal-body">
-      <Field label="所属甲方" full><Select value={item.clientId} onChange={event => { const nextClientId = event.target.value; const allowedProductIds = new Set(data.productLinks.filter(link => link.clientId === nextClientId).map(link => link.productId)); const nextProducts = data.products.filter(product => allowedProductIds.size === 0 || allowedProductIds.has(product.id)); setItem(current => ({ ...current, clientId: nextClientId, productId: nextProducts.some(product => product.id === current.productId) ? current.productId : nextProducts[0]?.id || '' })) }}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select></Field>
-      <Field label="商品名称" full><Select value={item.productId} onChange={event => setItem(current => ({ ...current, productId: event.target.value }))}><option value="">请选择商品</option>{productsForClient.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}</Select></Field>
+      <Field label="所属甲方" full><Select value={item.clientId} onChange={event => { const nextClientId = event.target.value; const allowedProductIds = productIdsForClient(nextClientId); const nextProducts = data.products.filter(product => allowedProductIds.has(product.id)); setItem(current => ({ ...current, clientId: nextClientId, productId: nextProducts.some(product => product.id === current.productId) ? current.productId : nextProducts[0]?.id || '' })) }}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select></Field>
+      <Field label="商品名称" full><Select value={item.productId} onChange={event => setItem(current => ({ ...current, productId: event.target.value }))}><option value="">{item.clientId && !productsForClient.length ? '该甲方暂无关联商品' : '请选择商品'}</option>{productsForClient.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}</Select></Field>
       <Field label="SKU 编码" full><Input autoFocus value={item.skuCode} onChange={event => setItem(current => ({ ...current, skuCode: event.target.value }))} placeholder="例如：SKU-A01" /></Field>
       <Field label="售卖规格" full><Input value={item.specification} onChange={event => setItem(current => ({ ...current, specification: event.target.value }))} placeholder="例如：2 件装 / 红色 XL" /></Field>
       <Field label="总成本" full><Input type="number" min="0" step="0.01" value={item.totalCost} onChange={event => setItem(current => ({ ...current, totalCost: event.target.value === '' ? 0 : Number(event.target.value) }))} /></Field>
