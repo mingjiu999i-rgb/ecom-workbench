@@ -73,6 +73,7 @@ h1 { margin-bottom: 6px; font-size: 28px; line-height: 1.2; letter-spacing: -.02
 .filter-bar { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 12px; margin-bottom: 14px; background: white; border: 1px solid var(--line); border-radius: 10px; }
 .filter-title { display: flex; align-items: center; gap: 7px; padding: 0 7px; color: #64748b; font-size: 13px; font-weight: 600; }
 .filter-bar select { width: 142px; }.filter-bar .search { margin-left: auto; }
+.cost-filter .search { width: min(360px, 100%); }
 input, select, textarea { width: 100%; min-height: 37px; border: 1px solid #dce1e9; border-radius: 7px; padding: 8px 10px; color: #263247; background: #fff; outline: none; font-size: 13px; transition: border-color .15s, box-shadow .15s; }
 input:focus, select:focus, textarea:focus { border-color: #7390ee; box-shadow: 0 0 0 3px #315efb12; }
 textarea { resize: vertical; }

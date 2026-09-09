@@ -4,12 +4,14 @@ import { Dashboard } from './pages/Dashboard'
 import { Products } from './pages/Products'
 import { Operations } from './pages/Operations'
 import { MasterData } from './pages/MasterData'
+import { ProductCosts } from './pages/ProductCosts'
 import { WorkbenchProvider } from './store/workbench'
 
 export default function App() {
   return <WorkbenchProvider><Routes><Route element={<Layout />}>
     <Route index element={<Dashboard />} />
     <Route path="products" element={<Products />} />
+    <Route path="product-costs" element={<ProductCosts />} />
     <Route path="operations" element={<Operations />} />
     <Route path="master-data" element={<MasterData />} />
     <Route path="*" element={<Navigate to="/" replace />} />

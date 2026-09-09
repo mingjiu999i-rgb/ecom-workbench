@@ -1,6 +1,6 @@
 import type { WorkbenchData } from '../types/models'
 
-// 首次启动时写入 LocalStorage。你可以直接修改这里的初始资料。
+// 新账号首次登录时写入 Supabase。你可以直接修改这里的初始资料。
 export const initialClients = [
   { id: 'client-a', name: '示例甲方A', remark: '' },
   { id: 'client-b', name: '示例甲方B', remark: '' },
@@ -28,6 +28,10 @@ export const initialData: WorkbenchData = {
   skus: [
     { id: 'sku-a', productLinkId: 'link-a', name: '标准装', skuId: 'SKU-A01', specification: '1 件', salePrice: 49.9, finalPrice: 39.9, productCost: 18, shippingCost: 4, packagingCost: 1, otherCost: 0, currentRoi: 5.2, breakEvenRoi: 4.6, activity: '平台活动', remark: '' },
     { id: 'sku-b', productLinkId: 'link-b', name: '组合装', skuId: 'SKU-B01', specification: '2 件', salePrice: 89, finalPrice: 69, productCost: 39, shippingCost: 5, packagingCost: 1.5, otherCost: 0, currentRoi: 3.8, breakEvenRoi: 4.3, activity: '无活动', remark: '关注投产' },
+  ],
+  productCosts: [
+    { id: 'cost-a', skuCode: 'SKU-A01', specification: '1 件', totalCost: 23 },
+    { id: 'cost-b', skuCode: 'SKU-B01', specification: '2 件', totalCost: 45.5 },
   ],
   operations: [],
 }
