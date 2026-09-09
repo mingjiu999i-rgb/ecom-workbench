@@ -6,6 +6,7 @@ import { createId, useWorkbench } from '../store/workbench'
 import type { Client, LinkStatus, Platform, Product, ProductLink, Sku, Store } from '../types/models'
 import { calculatedBreakEvenRoi, money, percent } from '../utils/calculations'
 import { appendSkuHistory } from '../utils/skuHistory'
+import { createSkuChangeOperations } from '../utils/skuOperations'
 
 type Tab = 'clients' | 'stores' | 'products' | 'links' | 'skus'
 type Draft = Partial<Client & Store & Product & ProductLink & Sku> & { platform?: Platform; status?: LinkStatus }
@@ -76,7 +77,7 @@ export function MasterData() {
       const price = Number(draft.salePrice || 0)
       const item: Sku = { id: draft.id || createId('sku'), productLinkId: draft.productLinkId || '', productCostId: cost?.id || '', name: draft.name?.trim() || '', skuId: cost?.skuCode || '', specification: cost?.specification || '', salePrice: price, finalPrice: price, productCost: cost?.totalCost || 0, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: draft.currentRoi || 0, breakEvenRoi: calculatedBreakEvenRoi(price, cost?.totalCost || 0), activity: draft.activity || '无活动', activityPrice: draft.activity === '无活动' ? 0 : Number(draft.activityPrice || 0), remark: draft.remark || '' }
       const before = current.skus.find(x => x.id === item.id)
-      return { ...current, skus: isEdit ? current.skus.map(x => x.id === item.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item) }
+      return { ...current, skus: isEdit ? current.skus.map(x => x.id === item.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item), operations: [...createSkuChangeOperations(current, before, item, '基础资料直接修改'), ...current.operations] }
     })
     setDraft(null)
   }

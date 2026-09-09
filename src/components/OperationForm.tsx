@@ -5,13 +5,13 @@ import type { AdjustmentReason, AdjustmentType, Operation, Sku } from '../types/
 import { appendSkuHistory } from '../utils/skuHistory'
 import { calculatedBreakEvenRoi, totalCost } from '../utils/calculations'
 
-const types: AdjustmentType[] = ['售价', '到手价', '成本', '投产', '活动', 'SKU', '其他']
-const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '其他']
+const types: AdjustmentType[] = ['售价', '到手价', '成本', '投产', '活动', '活动价', 'SKU', '其他']
+const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '手动修改', '其他']
 const activities = ['无活动', '平台活动', '店铺活动', '百亿补贴', '其他'] as const
 
 const currentValue = (sku: Sku | undefined, type: AdjustmentType) => {
   if (!sku) return ''
-  const map: Record<AdjustmentType, string> = { 售价: String(sku.salePrice), 到手价: String(sku.finalPrice), 成本: String(sku.productCost), 投产: String(sku.currentRoi), 活动: sku.activity, SKU: sku.name, 其他: '' }
+  const map: Record<AdjustmentType, string> = { 售价: String(sku.salePrice), 到手价: String(sku.finalPrice), 成本: String(sku.productCost), 投产: String(sku.currentRoi), 活动: sku.activity, 活动价: String(sku.activityPrice || 0), SKU: sku.name, 其他: '' }
   return map[type]
 }
 
@@ -77,6 +77,7 @@ function syncSku(sku: Sku, type: AdjustmentType, value: string): Sku {
   if (type === '成本') return { ...sku, productCost: Number.isFinite(numeric) ? numeric : sku.productCost }
   if (type === '投产') return { ...sku, currentRoi: Number.isFinite(numeric) ? numeric : sku.currentRoi }
   if (type === '活动') return { ...sku, activity: value as Sku['activity'] }
+  if (type === '活动价') return { ...sku, activityPrice: Number.isFinite(numeric) ? numeric : sku.activityPrice }
   if (type === 'SKU') return { ...sku, name: value }
   return sku
 }

@@ -9,6 +9,7 @@ import type { ActivityType, Platform, Sku } from '../types/models'
 import { calculatedBreakEvenRoi, grossMargin, grossProfit, money, percent, totalCost } from '../utils/calculations'
 import { getSkuContext } from '../utils/selectors'
 import { appendSkuHistory } from '../utils/skuHistory'
+import { createSkuChangeOperations } from '../utils/skuOperations'
 
 const emptySku = (productLinkId = ''): Sku => ({ id: '', productLinkId, productCostId: '', name: '', skuId: '', specification: '', salePrice: 0, finalPrice: 0, productCost: 0, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 0, breakEvenRoi: 0, activity: '无活动', activityPrice: 0, remark: '' })
 const activities: ActivityType[] = ['无活动', '平台活动', '店铺活动', '百亿补贴', '其他']
@@ -55,7 +56,7 @@ export function Products() {
         </tr> })}</tbody></table></div>
       {!rows.length && <div className="empty"><strong>没有符合条件的 SKU</strong><span>调整筛选条件或新增一条 SKU</span></div>}
     </section>
-    {editing && <SkuDrawer sku={editing} onClose={() => setEditing(null)} onAdjust={id => { setEditing(null); setOperationSkuId(id) }} onSave={saved => { update(current => { const before = current.skus.find(x => x.id === saved.id); const normalized = { ...saved, breakEvenRoi: calculatedBreakEvenRoi(saved.salePrice, totalCost(saved)), activityPrice: saved.activity === '无活动' ? 0 : saved.activityPrice }; const item = normalized.id ? normalized : { ...normalized, id: createId('sku') }; return { ...current, skus: saved.id ? current.skus.map(x => x.id === saved.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item) } }); setEditing(null) }} />}
+    {editing && <SkuDrawer sku={editing} onClose={() => setEditing(null)} onAdjust={id => { setEditing(null); setOperationSkuId(id) }} onSave={saved => { update(current => { const before = current.skus.find(x => x.id === saved.id); const normalized = { ...saved, breakEvenRoi: calculatedBreakEvenRoi(saved.salePrice, totalCost(saved)), activityPrice: saved.activity === '无活动' ? 0 : saved.activityPrice }; const item = normalized.id ? normalized : { ...normalized, id: createId('sku') }; return { ...current, skus: saved.id ? current.skus.map(x => x.id === saved.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item), operations: [...createSkuChangeOperations(current, before, item, '商品管理直接修改'), ...current.operations] } }); setEditing(null) }} />}
     {operationSkuId && <Modal title="新增调整" onClose={() => setOperationSkuId(null)} wide><OperationForm initialSkuId={operationSkuId} onDone={() => setOperationSkuId(null)} /></Modal>}
   </div>
 }
