@@ -9,7 +9,7 @@ import type { ActivityType, Platform, Sku } from '../types/models'
 import { grossMargin, grossProfit, money, percent, totalCost } from '../utils/calculations'
 import { getSkuContext } from '../utils/selectors'
 
-const emptySku = (productLinkId = ''): Sku => ({ id: '', productLinkId, name: '', skuId: '', specification: '', salePrice: 0, finalPrice: 0, productCost: 0, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 0, breakEvenRoi: 0, activity: '无活动', remark: '' })
+const emptySku = (productLinkId = ''): Sku => ({ id: '', productLinkId, productCostId: '', name: '', skuId: '', specification: '', salePrice: 0, finalPrice: 0, productCost: 0, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 0, breakEvenRoi: 0, activity: '无活动', remark: '' })
 const activities: ActivityType[] = ['无活动', '平台活动', '店铺活动', '百亿补贴', '其他']
 
 export function Products() {

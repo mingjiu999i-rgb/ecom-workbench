@@ -29,7 +29,20 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
           totalCost: Number(sku.productCost || 0) + Number(sku.shippingCost || 0) + Number(sku.packagingCost || 0) + Number(sku.otherCost || 0),
         }
       })
-  return { ...value, products, productCosts }
+  const skus = (value.skus || []).map(sku => {
+    const link = (value.productLinks || []).find(item => item.id === sku.productLinkId)
+    const linkedCost = productCosts.find(cost => cost.id === sku.productCostId)
+      || productCosts.find(cost => cost.productId === link?.productId && cost.skuCode === sku.skuId)
+    return {
+      ...sku,
+      productCostId: linkedCost?.id || '',
+      productCost: linkedCost?.totalCost ?? sku.productCost,
+      shippingCost: linkedCost ? 0 : sku.shippingCost,
+      packagingCost: linkedCost ? 0 : sku.packagingCost,
+      otherCost: linkedCost ? 0 : sku.otherCost,
+    }
+  })
+  return { ...value, products, productCosts, skus }
 }
 
 export async function loadWorkbench(userId: string): Promise<WorkbenchData> {

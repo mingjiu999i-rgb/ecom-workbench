@@ -26,8 +26,8 @@ export const initialData: WorkbenchData = {
     { id: 'link-b', clientId: 'client-b', storeId: 'store-tb', productId: 'product-b', linkId: 'TB-20001', url: '', remark: '' },
   ],
   skus: [
-    { id: 'sku-a', productLinkId: 'link-a', name: '标准装', skuId: 'SKU-A01', specification: '1 件', salePrice: 49.9, finalPrice: 39.9, productCost: 18, shippingCost: 4, packagingCost: 1, otherCost: 0, currentRoi: 5.2, breakEvenRoi: 4.6, activity: '平台活动', remark: '' },
-    { id: 'sku-b', productLinkId: 'link-b', name: '组合装', skuId: 'SKU-B01', specification: '2 件', salePrice: 89, finalPrice: 69, productCost: 39, shippingCost: 5, packagingCost: 1.5, otherCost: 0, currentRoi: 3.8, breakEvenRoi: 4.3, activity: '无活动', remark: '关注投产' },
+    { id: 'sku-a', productLinkId: 'link-a', productCostId: 'cost-a', name: '标准装', skuId: 'SKU-A01', specification: '1 件', salePrice: 49.9, finalPrice: 39.9, productCost: 23, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 5.2, breakEvenRoi: 4.6, activity: '平台活动', remark: '' },
+    { id: 'sku-b', productLinkId: 'link-b', productCostId: 'cost-b', name: '组合装', skuId: 'SKU-B01', specification: '2 件', salePrice: 89, finalPrice: 69, productCost: 45.5, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 3.8, breakEvenRoi: 4.3, activity: '无活动', remark: '关注投产' },
   ],
   productCosts: [
     { id: 'cost-a', productId: 'product-a', skuCode: 'SKU-A01', specification: '1 件', totalCost: 23 },

@@ -14,7 +14,7 @@ export interface ProductLink {
   linkId: string; url: string; remark: string
 }
 export interface Sku {
-  id: string; productLinkId: string; name: string; skuId: string; specification: string
+  id: string; productLinkId: string; productCostId: string; name: string; skuId: string; specification: string
   salePrice: number; finalPrice: number; productCost: number; shippingCost: number
   packagingCost: number; otherCost: number; currentRoi: number; breakEvenRoi: number
   activity: ActivityType; remark: string

@@ -4,7 +4,7 @@ import { Field, Input, Select } from '../components/Fields'
 import { Modal } from '../components/Overlay'
 import { createId, useWorkbench } from '../store/workbench'
 import type { ProductCost } from '../types/models'
-import { money } from '../utils/calculations'
+import { calculatedBreakEvenRoi, money } from '../utils/calculations'
 
 const emptyCost = (productId = ''): ProductCost => ({ id: '', productId, skuCode: '', specification: '', totalCost: 0 })
 
@@ -26,11 +26,25 @@ export function ProductCosts() {
       productCosts: item.id
         ? current.productCosts.map(row => row.id === item.id ? item : row)
         : [...current.productCosts, { ...item, id: createId('cost') }],
+      skus: item.id ? current.skus.map(sku => sku.productCostId === item.id ? {
+        ...sku,
+        skuId: item.skuCode,
+        specification: item.specification,
+        productCost: item.totalCost,
+        shippingCost: 0,
+        packagingCost: 0,
+        otherCost: 0,
+        breakEvenRoi: calculatedBreakEvenRoi(sku.salePrice, item.totalCost),
+      } : sku) : current.skus,
     }))
     setEditing(null)
   }
 
   const remove = (item: ProductCost) => {
+    if (data.skus.some(sku => sku.productCostId === item.id)) {
+      window.alert('该成本 SKU 已被商品 SKU 使用，请先删除或更换关联后再删除。')
+      return
+    }
     if (!window.confirm(`确定删除 SKU“${item.skuCode}”的成本资料吗？`)) return
     update(current => ({ ...current, productCosts: current.productCosts.filter(row => row.id !== item.id) }))
   }
