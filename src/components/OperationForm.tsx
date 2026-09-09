@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Field, Input, Select, Textarea } from './Fields'
 import { createId, useWorkbench } from '../store/workbench'
 import type { AdjustmentReason, AdjustmentType, Operation, Sku } from '../types/models'
+import { appendSkuHistory } from '../utils/skuHistory'
 
 const types: AdjustmentType[] = ['售价', '到手价', '成本', '投产', '活动', 'SKU', '其他']
 const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '其他']
@@ -41,10 +42,15 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
   const save = () => {
     if (!valid) return
     const operation: Operation = { id: createId('op'), createdAt: new Date(createdAt).toISOString(), clientId, storeId, productId, productLinkId: linkId, skuId, type, before, after, reason, remark }
-    update(current => ({ ...current,
-      operations: [operation, ...current.operations],
-      skus: current.skus.map(sku => sku.id !== skuId ? sku : syncSku(sku, type, after)),
-    }))
+    update(current => {
+      const beforeSku = current.skus.find(sku => sku.id === skuId)
+      const afterSku = beforeSku ? syncSku(beforeSku, type, after) : undefined
+      return { ...current,
+        operations: [operation, ...current.operations],
+        skus: current.skus.map(sku => sku.id !== skuId ? sku : afterSku || sku),
+        skuHistory: afterSku ? appendSkuHistory(current.skuHistory, beforeSku, afterSku) : current.skuHistory,
+      }
+    })
     onDone()
   }
 

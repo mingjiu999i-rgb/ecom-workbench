@@ -22,8 +22,8 @@ export const initialData: WorkbenchData = {
   stores: initialStores,
   products: initialProducts,
   productLinks: [
-    { id: 'link-a', clientId: 'client-a', storeId: 'store-pdd', productId: 'product-a', linkId: 'PDD-10001', url: '', remark: '' },
-    { id: 'link-b', clientId: 'client-b', storeId: 'store-tb', productId: 'product-b', linkId: 'TB-20001', url: '', remark: '' },
+    { id: 'link-a', clientId: 'client-a', storeId: 'store-pdd', productId: 'product-a', linkId: 'PDD-10001', status: '日销', url: '', remark: '' },
+    { id: 'link-b', clientId: 'client-b', storeId: 'store-tb', productId: 'product-b', linkId: 'TB-20001', status: '日销', url: '', remark: '' },
   ],
   skus: [
     { id: 'sku-a', productLinkId: 'link-a', productCostId: 'cost-a', name: '标准装', skuId: 'SKU-A01', specification: '1 件', salePrice: 49.9, finalPrice: 39.9, productCost: 23, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 5.2, breakEvenRoi: 4.6, activity: '平台活动', remark: '' },
@@ -34,4 +34,5 @@ export const initialData: WorkbenchData = {
     { id: 'cost-b', productId: 'product-b', skuCode: 'SKU-B01', specification: '2 件', totalCost: 45.5 },
   ],
   operations: [],
+  skuHistory: [],
 }
