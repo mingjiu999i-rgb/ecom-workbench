@@ -28,16 +28,17 @@ export function Products() {
     return (!clientId || ctx.client?.id === clientId) && (!storeId || ctx.store?.id === storeId) && (!platform || ctx.store?.platform === platform) && (!productId || ctx.product?.id === productId) && (!query || haystack.includes(query.toLowerCase()))
   }), [data, clientId, storeId, platform, productId, query])
   const filteredStores = data.stores.filter(s => !clientId || s.clientId === clientId)
+  const filteredProducts = data.products.filter(product => !clientId || product.clientId === clientId)
   const clear = () => { setClientId(''); setStoreId(''); setPlatform(''); setProductId(''); setQuery('') }
 
   return <div className="page page-wide">
     <div className="page-heading"><div><span className="eyebrow">经营数据中心</span><h1>商品管理</h1><p>统一查看 SKU 的价格、成本、毛利和投产状态。</p></div><button className="button primary" onClick={() => setEditing(emptySku(data.productLinks[0]?.id))}><Plus size={17} />新增 SKU</button></div>
     <section className="filter-bar">
       <div className="filter-title"><Filter size={17} /><span>筛选</span></div>
-      <Select aria-label="甲方筛选" value={clientId} onChange={e => { setClientId(e.target.value); setStoreId('') }}><option value="">全部甲方</option>{data.clients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
+      <Select aria-label="甲方筛选" value={clientId} onChange={e => { setClientId(e.target.value); setStoreId(''); setProductId('') }}><option value="">全部甲方</option>{data.clients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
       <Select aria-label="店铺筛选" value={storeId} onChange={e => setStoreId(e.target.value)}><option value="">全部店铺</option>{filteredStores.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
       <Select aria-label="平台筛选" value={platform} onChange={e => setPlatform(e.target.value)}><option value="">全部平台</option>{['拼多多', '淘宝', '其他'].map(x => <option key={x}>{x}</option>)}</Select>
-      <Select aria-label="产品筛选" value={productId} onChange={e => setProductId(e.target.value)}><option value="">全部产品</option>{data.products.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
+      <Select aria-label="产品筛选" value={productId} onChange={e => setProductId(e.target.value)}><option value="">全部产品</option>{filteredProducts.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
       <div className="search"><Search size={16} /><Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索产品、链接或 SKU" /></div>
       {(clientId || storeId || platform || productId || query) && <button className="text-button" onClick={clear}>清空</button>}
     </section>

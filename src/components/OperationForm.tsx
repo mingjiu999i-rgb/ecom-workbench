@@ -30,6 +30,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
   const [remark, setRemark] = useState('')
   const [createdAt, setCreatedAt] = useState(new Date().toISOString().slice(0, 16))
   const stores = data.stores.filter(s => !clientId || s.clientId === clientId)
+  const products = data.products.filter(product => !clientId || product.clientId === clientId)
   const links = data.productLinks.filter(l => (!clientId || l.clientId === clientId) && (!storeId || l.storeId === storeId) && (!productId || l.productId === productId))
   const skus = data.skus.filter(s => !linkId || s.productLinkId === linkId)
   const valid = clientId && storeId && productId && linkId && skuId && after.trim()
@@ -48,9 +49,9 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
   }
 
   return <><div className="form-grid operation-form">
-    <Field label="甲方"><Select value={clientId} onChange={e => { setClientId(e.target.value); setStoreId(''); setLinkId(''); setSkuId('') }}><option value="">请选择</option>{data.clients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
+    <Field label="甲方"><Select value={clientId} onChange={e => { setClientId(e.target.value); setStoreId(''); setProductId(''); setLinkId(''); setSkuId('') }}><option value="">请选择</option>{data.clients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
     <Field label="店铺"><Select value={storeId} onChange={e => { setStoreId(e.target.value); setLinkId(''); setSkuId('') }}><option value="">请选择</option>{stores.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
-    <Field label="产品"><Select value={productId} onChange={e => { setProductId(e.target.value); setLinkId(''); setSkuId('') }}><option value="">请选择</option>{data.products.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
+    <Field label="产品"><Select value={productId} onChange={e => { setProductId(e.target.value); setLinkId(''); setSkuId('') }}><option value="">请选择</option>{products.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
     <Field label="商品链接"><Select value={linkId} onChange={e => { setLinkId(e.target.value); setSkuId('') }}><option value="">请选择</option>{links.map(x => <option key={x.id} value={x.id}>{x.linkId}</option>)}</Select></Field>
     <Field label="SKU"><Select value={skuId} onChange={e => chooseSku(e.target.value)}><option value="">请选择</option>{skus.map(x => <option key={x.id} value={x.id}>{x.name} · {x.skuId}</option>)}</Select></Field>
     <Field label="调整类型"><Select value={type} onChange={e => setTypeAndBefore(e.target.value as AdjustmentType)}>{types.map(x => <option key={x}>{x}</option>)}</Select></Field>

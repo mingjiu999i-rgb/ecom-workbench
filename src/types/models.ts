@@ -5,9 +5,9 @@ export type AdjustmentReason = '平台比价' | '竞品变化' | '报活动' | '
 
 export interface Client { id: string; name: string; remark: string }
 export interface Store { id: string; clientId: string; name: string; platform: Platform }
-export interface Product { id: string; name: string; remark: string }
+export interface Product { id: string; clientId: string; name: string; remark: string }
 export interface ProductCost {
-  id: string; clientId: string; productId: string; skuCode: string; specification: string; totalCost: number
+  id: string; productId: string; skuCode: string; specification: string; totalCost: number
 }
 export interface ProductLink {
   id: string; clientId: string; storeId: string; productId: string

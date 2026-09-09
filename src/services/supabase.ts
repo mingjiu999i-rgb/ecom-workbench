@@ -9,26 +9,28 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-anon-key')
 const cloneInitialData = (): WorkbenchData => JSON.parse(JSON.stringify(initialData)) as WorkbenchData
 
-const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => ({
-  ...value,
-  productCosts: Array.isArray(value.productCosts)
-    ? value.productCosts.map(cost => {
-        const sku = (value.skus || []).find(item => item.skuId === cost.skuCode)
-        const link = (value.productLinks || []).find(item => item.id === sku?.productLinkId)
-        return { ...cost, clientId: cost.clientId || link?.clientId || '', productId: cost.productId || link?.productId || '' }
-      })
+const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
+  const hasProductCosts = Array.isArray(value.productCosts)
+  const legacyCosts = hasProductCosts ? value.productCosts : []
+  const products = (value.products || []).map(product => {
+    const legacyCost = legacyCosts.find(cost => cost.productId === product.id) as (typeof legacyCosts[number] & { clientId?: string }) | undefined
+    const link = (value.productLinks || []).find(item => item.productId === product.id)
+    return { ...product, clientId: product.clientId || legacyCost?.clientId || link?.clientId || '' }
+  })
+  const productCosts = hasProductCosts
+    ? legacyCosts.map(cost => ({ id: cost.id, productId: cost.productId || '', skuCode: cost.skuCode, specification: cost.specification, totalCost: cost.totalCost }))
     : (value.skus || []).map(sku => {
-      const link = (value.productLinks || []).find(item => item.id === sku.productLinkId)
-      return {
-        id: `cost-${sku.id}`,
-        clientId: link?.clientId || '',
-        productId: link?.productId || '',
-        skuCode: sku.skuId,
-        specification: sku.specification,
-        totalCost: Number(sku.productCost || 0) + Number(sku.shippingCost || 0) + Number(sku.packagingCost || 0) + Number(sku.otherCost || 0),
-      }
-    }),
-})
+        const link = (value.productLinks || []).find(item => item.id === sku.productLinkId)
+        return {
+          id: `cost-${sku.id}`,
+          productId: link?.productId || '',
+          skuCode: sku.skuId,
+          specification: sku.specification,
+          totalCost: Number(sku.productCost || 0) + Number(sku.shippingCost || 0) + Number(sku.packagingCost || 0) + Number(sku.otherCost || 0),
+        }
+      })
+  return { ...value, products, productCosts }
+}
 
 export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
   const { data, error } = await supabase.from('workbench_documents').select('data').eq('user_id', userId).maybeSingle()
