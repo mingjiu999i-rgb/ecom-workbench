@@ -28,7 +28,11 @@ export interface Operation {
 export interface SkuHistory {
   id: string; skuId: string; name: string; salePrice: number; recordedAt: string
 }
+export interface TodoItem {
+  id: string; date: string; title: string; clientId: string; storeId: string
+  completed: boolean; createdAt: string
+}
 export interface WorkbenchData {
   clients: Client[]; stores: Store[]; products: Product[]; productLinks: ProductLink[]
-  skus: Sku[]; productCosts: ProductCost[]; operations: Operation[]; skuHistory: SkuHistory[]
+  skus: Sku[]; productCosts: ProductCost[]; operations: Operation[]; skuHistory: SkuHistory[]; todos: TodoItem[]
 }

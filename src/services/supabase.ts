@@ -44,7 +44,7 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
     }
   })
   const productLinks = (value.productLinks || []).map(link => ({ ...link, status: link.status || '日销' as const }))
-  return { ...value, products, productCosts, productLinks, skus, skuHistory: value.skuHistory || [] }
+  return { ...value, products, productCosts, productLinks, skus, skuHistory: value.skuHistory || [], todos: value.todos || [] }
 }
 
 export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
