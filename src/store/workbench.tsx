@@ -62,10 +62,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     void Promise.resolve(context.registerTool({
       name: 'read_workbench_summary',
       title: '查看运营概况',
-      description: '读取当前云端工作台的甲方、店铺、商品链接、SKU 和风险 SKU 数量。',
+      description: '读取当前云端工作台的甲方、店铺、商品链接和 SKU 数量。',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute: () => ({ clients: data.clients.length, stores: data.stores.length, productLinks: data.productLinks.length, skus: data.skus.length, riskSkus: data.skus.filter(s => s.currentRoi < s.breakEvenRoi).length }),
+      execute: () => ({ clients: data.clients.length, stores: data.stores.length, productLinks: data.productLinks.length, skus: data.skus.length }),
     }, { signal: lifecycle.signal })).catch(report)
     return () => lifecycle.abort()
   }, [data])

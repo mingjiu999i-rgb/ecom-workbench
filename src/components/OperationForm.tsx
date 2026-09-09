@@ -3,6 +3,7 @@ import { Field, Input, Select, Textarea } from './Fields'
 import { createId, useWorkbench } from '../store/workbench'
 import type { AdjustmentReason, AdjustmentType, Operation, Sku } from '../types/models'
 import { appendSkuHistory } from '../utils/skuHistory'
+import { calculatedBreakEvenRoi, totalCost } from '../utils/calculations'
 
 const types: AdjustmentType[] = ['售价', '到手价', '成本', '投产', '活动', 'SKU', '其他']
 const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '其他']
@@ -71,7 +72,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
 
 function syncSku(sku: Sku, type: AdjustmentType, value: string): Sku {
   const numeric = Number(value)
-  if (type === '售价') return { ...sku, salePrice: Number.isFinite(numeric) ? numeric : sku.salePrice }
+  if (type === '售价' && Number.isFinite(numeric)) return { ...sku, salePrice: numeric, breakEvenRoi: calculatedBreakEvenRoi(numeric, totalCost(sku)) }
   if (type === '到手价') return { ...sku, finalPrice: Number.isFinite(numeric) ? numeric : sku.finalPrice }
   if (type === '成本') return { ...sku, productCost: Number.isFinite(numeric) ? numeric : sku.productCost }
   if (type === '投产') return { ...sku, currentRoi: Number.isFinite(numeric) ? numeric : sku.currentRoi }

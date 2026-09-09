@@ -18,7 +18,7 @@ export interface Sku {
   id: string; productLinkId: string; productCostId: string; name: string; skuId: string; specification: string
   salePrice: number; finalPrice: number; productCost: number; shippingCost: number
   packagingCost: number; otherCost: number; currentRoi: number; breakEvenRoi: number
-  activity: ActivityType; remark: string
+  activity: ActivityType; activityPrice: number; remark: string
 }
 export interface Operation {
   id: string; createdAt: string; clientId: string; storeId: string; productId: string

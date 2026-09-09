@@ -58,7 +58,7 @@ export function MasterData() {
         return true
       }).map(row => {
         const cost = current.productCosts.find(item => item.id === row.productCostId)!
-        return { id: createId('sku'), productLinkId: batchLinkId, productCostId: cost.id, name: row.name, skuId: cost.skuCode, specification: cost.specification, salePrice: row.price, finalPrice: row.price, productCost: cost.totalCost, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 0, breakEvenRoi: calculatedBreakEvenRoi(row.price, cost.totalCost), activity: '无活动' as const, remark: '' }
+        return { id: createId('sku'), productLinkId: batchLinkId, productCostId: cost.id, name: row.name, skuId: cost.skuCode, specification: cost.specification, salePrice: row.price, finalPrice: row.price, productCost: cost.totalCost, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 0, breakEvenRoi: calculatedBreakEvenRoi(row.price, cost.totalCost), activity: '无活动' as const, activityPrice: 0, remark: '' }
       })
       return { ...current, skus: [...current.skus, ...additions] }
     })
@@ -74,7 +74,7 @@ export function MasterData() {
       if (tab === 'links') { const item: ProductLink = { id: draft.id || createId('link'), clientId: draft.clientId || '', storeId: draft.storeId || '', productId: draft.productId || '', linkId: draft.linkId?.trim() || '', status: draft.status || '日销', url: draft.url || '', remark: draft.remark || '' }; return { ...current, productLinks: isEdit ? current.productLinks.map(x => x.id === item.id ? item : x) : [...current.productLinks, item] } }
       const cost = current.productCosts.find(x => x.id === draft.productCostId)
       const price = Number(draft.salePrice || 0)
-      const item: Sku = { id: draft.id || createId('sku'), productLinkId: draft.productLinkId || '', productCostId: cost?.id || '', name: draft.name?.trim() || '', skuId: cost?.skuCode || '', specification: cost?.specification || '', salePrice: price, finalPrice: price, productCost: cost?.totalCost || 0, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: draft.currentRoi || 0, breakEvenRoi: calculatedBreakEvenRoi(price, cost?.totalCost || 0), activity: draft.activity || '无活动', remark: draft.remark || '' }
+      const item: Sku = { id: draft.id || createId('sku'), productLinkId: draft.productLinkId || '', productCostId: cost?.id || '', name: draft.name?.trim() || '', skuId: cost?.skuCode || '', specification: cost?.specification || '', salePrice: price, finalPrice: price, productCost: cost?.totalCost || 0, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: draft.currentRoi || 0, breakEvenRoi: calculatedBreakEvenRoi(price, cost?.totalCost || 0), activity: draft.activity || '无活动', activityPrice: draft.activity === '无活动' ? 0 : Number(draft.activityPrice || 0), remark: draft.remark || '' }
       const before = current.skus.find(x => x.id === item.id)
       return { ...current, skus: isEdit ? current.skus.map(x => x.id === item.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item) }
     })

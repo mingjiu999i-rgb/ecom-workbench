@@ -1,4 +1,4 @@
-import { ArrowRight, Box, Building2, Link2, Store, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Box, Building2, Link2, Store } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
 import { displayDate, getSkuContext } from '../utils/selectors'
@@ -6,11 +6,9 @@ import { displayDate, getSkuContext } from '../utils/selectors'
 export function Dashboard() {
   const { data } = useWorkbench()
   const navigate = useNavigate()
-  const risks = data.skus.filter(s => s.currentRoi < s.breakEvenRoi).length
   const metrics = [
     ['甲方', data.clients.length, Building2, 'blue'], ['店铺', data.stores.length, Store, 'violet'],
     ['商品链接', data.productLinks.length, Link2, 'cyan'], ['SKU', data.skus.length, Box, 'indigo'],
-    ['投产风险', risks, TriangleAlert, risks ? 'red' : 'green'],
   ] as const
   const recent = [...data.operations].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
 
