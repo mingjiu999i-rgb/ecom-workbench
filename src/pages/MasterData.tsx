@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ExternalLink, Filter, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink, Filter, ListPlus, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { Fragment, useState } from 'react'
 import { Field, Input, Select, Textarea } from '../components/Fields'
 import { Modal } from '../components/Overlay'
@@ -8,6 +8,7 @@ import { calculatedBreakEvenRoi, money, percent } from '../utils/calculations'
 
 type Tab = 'clients' | 'stores' | 'products' | 'links' | 'skus'
 type Draft = Partial<Client & Store & Product & ProductLink & Sku> & { platform?: Platform }
+type BatchRow = { name: string; price: number; productCostId: string }
 const tabs: { id: Tab; label: string }[] = [{ id: 'clients', label: '甲方' }, { id: 'stores', label: '店铺' }, { id: 'products', label: '产品' }, { id: 'links', label: '商品链接' }, { id: 'skus', label: 'SKU' }]
 
 export function MasterData() {
@@ -19,8 +20,46 @@ export function MasterData() {
   const [skuLinkId, setSkuLinkId] = useState('')
   const [skuQuery, setSkuQuery] = useState('')
   const [expandedSkuLinks, setExpandedSkuLinks] = useState<Set<string>>(new Set())
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchLinkId, setBatchLinkId] = useState('')
+  const [batchText, setBatchText] = useState('')
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([])
   const isEdit = Boolean(draft?.id)
   const openNew = () => setDraft(tab === 'stores' ? { clientId: data.clients[0]?.id, platform: '拼多多' } : tab === 'products' ? { clientId: data.clients[0]?.id } : tab === 'links' ? { clientId: data.clients[0]?.id, storeId: '', productId: '' } : tab === 'skus' ? { productLinkId: '', productCostId: '', name: '', salePrice: 0 } : {})
+
+  const batchCosts = data.productCosts.filter(cost => cost.productId === data.productLinks.find(link => link.id === batchLinkId)?.productId)
+  const parseBatch = () => {
+    const normalize = (value: string) => value.toLowerCase().replace(/[\s【】\[\]（）()*/×]/g, '')
+    const rows = batchText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      const cells = line.split(/\t|,|，/).map(cell => cell.trim()).filter(Boolean)
+      const price = Number(cells.at(-1))
+      const name = cells.slice(0, -1).join(' ')
+      const key = normalize(name)
+      const matches = batchCosts.filter(cost => {
+        const spec = normalize(cost.specification)
+        return spec.length >= 3 && (key.includes(spec) || spec.includes(key))
+      })
+      return { name, price, productCostId: matches.length === 1 ? matches[0].id : '' }
+    }).filter(row => row.name && Number.isFinite(row.price) && row.price > 0)
+    setBatchRows(rows)
+  }
+  const saveBatch = () => {
+    if (!batchLinkId || !batchRows.length || batchRows.some(row => !row.productCostId)) return
+    update(current => {
+      const existing = new Set(current.skus.filter(sku => sku.productLinkId === batchLinkId).map(sku => sku.name.trim().toLowerCase()))
+      const additions = batchRows.filter(row => {
+        const key = row.name.trim().toLowerCase()
+        if (existing.has(key)) return false
+        existing.add(key)
+        return true
+      }).map(row => {
+        const cost = current.productCosts.find(item => item.id === row.productCostId)!
+        return { id: createId('sku'), productLinkId: batchLinkId, productCostId: cost.id, name: row.name, skuId: cost.skuCode, specification: cost.specification, salePrice: row.price, finalPrice: row.price, productCost: cost.totalCost, shippingCost: 0, packagingCost: 0, otherCost: 0, currentRoi: 0, breakEvenRoi: calculatedBreakEvenRoi(row.price, cost.totalCost), activity: '无活动' as const, remark: '' }
+      })
+      return { ...current, skus: [...current.skus, ...additions] }
+    })
+    setBatchOpen(false); setBatchText(''); setBatchRows([])
+  }
 
   const save = () => {
     if (!draft) return
@@ -70,7 +109,7 @@ export function MasterData() {
   const valid = tab === 'clients' ? draft?.name?.trim() : tab === 'products' ? draft?.clientId && draft.name?.trim() : tab === 'stores' ? draft?.clientId && draft.name?.trim() : tab === 'links' ? draft?.clientId && draft?.storeId && draft?.productId && draft?.linkId?.trim() : draft?.productLinkId && draft?.productCostId && draft?.name?.trim() && skuPrice > 0
 
   return <div className="page">
-    <div className="page-heading"><div><span className="eyebrow">数据字典</span><h1>基础资料</h1><p>按甲方 → 产品 → 成本 → 商品链接 → SKU 维护业务关系。</p></div><button className="button primary" onClick={openNew}><Plus size={17} />新增{title}</button></div>
+    <div className="page-heading"><div><span className="eyebrow">数据字典</span><h1>基础资料</h1><p>按甲方 → 产品 → 成本 → 商品链接 → SKU 维护业务关系。</p></div><div className="heading-actions">{tab === 'skus' && <button className="button secondary" onClick={() => setBatchOpen(true)}><ListPlus size={17} />批量导入</button>}<button className="button primary" onClick={openNew}><Plus size={17} />新增{title}</button></div></div>
     <section className="panel master-panel"><div className="tabs" role="tablist">{tabs.map(x => <button role="tab" aria-selected={tab === x.id} className={tab === x.id ? 'active' : ''} key={x.id} onClick={() => setTab(x.id)}>{x.label}<span>{data[x.id === 'links' ? 'productLinks' : x.id].length}</span></button>)}</div><div className="master-content">
       {tab === 'clients' && <SimpleTable headers={['名称','备注','操作']} rows={data.clients.map(x => [<strong>{x.name}</strong>, x.remark || '—', <Actions key="a" onEdit={() => setDraft(x)} onDelete={() => remove(x.id, x.name)} />])} />}
       {tab === 'stores' && <SimpleTable headers={['店铺名称','所属甲方','平台','操作']} rows={data.stores.map(x => [<strong>{x.name}</strong>, data.clients.find(c => c.id === x.clientId)?.name || '—', <span className="tag">{x.platform}</span>, <Actions key="a" onEdit={() => setDraft(x)} onDelete={() => remove(x.id, x.name)} />])} />}
@@ -85,6 +124,13 @@ export function MasterData() {
       {tab === 'links' && <><Field label="所属甲方"><Select value={draft.clientId || ''} onChange={e => setDraft({ ...draft, clientId: e.target.value, storeId: '', productId: '' })}><option value="">请选择</option>{data.clients.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field><Field label="所属店铺"><Select value={draft.storeId || ''} onChange={e => setDraft({ ...draft, storeId: e.target.value })}><option value="">请选择</option>{storesForClient.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field><Field label="产品"><Select value={draft.productId || ''} onChange={e => setDraft({ ...draft, productId: e.target.value })}><option value="">{draft.clientId && !productsForLink.length ? '请先为该甲方建立产品成本' : '请选择'}</option>{productsForLink.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field><Field label="商品 ID"><Input value={draft.linkId || ''} onChange={e => setDraft({ ...draft, linkId: e.target.value })} /></Field><Field label="商品链接 URL" full><Input type="url" value={draft.url || ''} onChange={e => setDraft({ ...draft, url: e.target.value })} placeholder="https://" /></Field><Field label="备注" full><Textarea value={draft.remark || ''} onChange={e => setDraft({ ...draft, remark: e.target.value })} /></Field></>}
       {tab === 'skus' && <><Field label="商品 ID" full><Select value={draft.productLinkId || ''} onChange={e => setDraft({ ...draft, productLinkId: e.target.value, productCostId: '' })}><option value="">请选择商品 ID</option>{data.productLinks.map(link => { const product = data.products.find(x => x.id === link.productId); const client = data.clients.find(x => x.id === product?.clientId); return <option key={link.id} value={link.id}>{link.linkId} · {client?.name} · {product?.name}</option> })}</Select></Field><Field label="售卖 SKU 名称" full><Input autoFocus value={draft.name || ''} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="SKU 编码" full><Select value={draft.productCostId || ''} onChange={e => setDraft({ ...draft, productCostId: e.target.value })}><option value="">{selectedLink && !costsForSku.length ? '该产品暂无成本 SKU' : '请从产品成本库选择'}</option>{costsForSku.map(cost => <option key={cost.id} value={cost.id}>{cost.skuCode} · {cost.specification}</option>)}</Select></Field><Field label="成本（自动同步）"><Input value={money(skuCost)} readOnly /></Field><Field label="售价"><Input type="number" min="0" step="0.01" value={draft.salePrice ?? 0} onChange={e => setDraft({ ...draft, salePrice: e.target.value === '' ? 0 : Number(e.target.value) })} /></Field><div className="profit-strip" style={{ gridColumn: '1 / -1' }}><div><span>毛利</span><strong>{money(skuProfit)}</strong></div><div><span>毛利率</span><strong>{percent(skuMargin)}</strong></div><div><span>保本 ROI</span><strong>{calculatedBreakEvenRoi(skuPrice, skuCost).toFixed(2)}</strong></div></div></>}
     </div><div className="modal-actions"><button className="button ghost" onClick={() => setDraft(null)}>取消</button><button className="button primary" disabled={!valid} onClick={save}>保存</button></div></Modal>}
+    {batchOpen && <Modal title="批量导入 SKU" wide onClose={() => setBatchOpen(false)}><div className="batch-import modal-body">
+      <Field label="商品 ID" full><Select value={batchLinkId} onChange={e => { setBatchLinkId(e.target.value); setBatchRows([]) }}><option value="">请选择商品 ID</option>{data.productLinks.map(link => { const product = data.products.find(x => x.id === link.productId); const client = data.clients.find(x => x.id === link.clientId); return <option key={link.id} value={link.id}>{link.linkId} · {client?.name} · {product?.name}</option> })}</Select></Field>
+      <Field label="粘贴数据（每行：SKU 名称 + Tab + 售价）" full><Textarea rows={8} value={batchText} onChange={e => { setBatchText(e.target.value); setBatchRows([]) }} placeholder={'2袋原味【2*125g/包】含花青素\t19.50\n2袋麻辣【2*125g/包】含花青素\t19.50'} /></Field>
+      <button className="button secondary" disabled={!batchLinkId || !batchText.trim()} onClick={parseBatch}>解析并匹配成本</button>
+      {batchRows.length > 0 && <div className="table-scroll batch-preview"><table><thead><tr><th>售卖 SKU 名称</th><th>售价</th><th>成本 SKU</th></tr></thead><tbody>{batchRows.map((row, index) => <tr key={`${row.name}-${index}`}><td>{row.name}</td><td>{money(row.price)}</td><td><Select value={row.productCostId} onChange={e => setBatchRows(current => current.map((item, i) => i === index ? { ...item, productCostId: e.target.value } : item))}><option value="">请选择成本 SKU</option>{batchCosts.map(cost => <option key={cost.id} value={cost.id}>{cost.skuCode} · {cost.specification} · {money(cost.totalCost)}</option>)}</Select></td></tr>)}</tbody></table></div>}
+      {batchRows.length > 0 && batchRows.some(row => !row.productCostId) && <div className="form-error">请为未自动匹配的行选择成本 SKU。</div>}
+    </div><div className="modal-actions"><button className="button ghost" onClick={() => setBatchOpen(false)}>取消</button><button className="button primary" disabled={!batchRows.length || batchRows.some(row => !row.productCostId)} onClick={saveBatch}>导入 {batchRows.length || ''} 条 SKU</button></div></Modal>}
   </div>
 }
 
