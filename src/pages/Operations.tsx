@@ -8,7 +8,7 @@ import { displayDate, getSkuContext } from '../utils/selectors'
 export function Operations() {
   const { data } = useWorkbench()
   const [open, setOpen] = useState(false)
-  const operations = [...data.operations].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const operations = data.operations.filter(operation => operation.type !== '到手价').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   return <div className="page page-wide">
     <div className="page-heading"><div><span className="eyebrow">变更追踪</span><h1>调整记录</h1><p>保留每次 SKU 经营参数的调整原因和前后值。</p></div><button className="button primary" onClick={() => setOpen(true)}><Plus size={17} />新增调整</button></div>
     <section className="panel table-panel"><div className="table-caption"><div><strong>全部记录</strong><span>共 {operations.length} 条</span></div></div>

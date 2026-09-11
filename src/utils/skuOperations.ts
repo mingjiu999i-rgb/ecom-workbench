@@ -3,7 +3,6 @@ import type { AdjustmentType, Operation, Sku, WorkbenchData } from '../types/mod
 const trackedFields: Array<{ key: keyof Sku; type: AdjustmentType }> = [
   { key: 'name', type: 'SKU' },
   { key: 'salePrice', type: '售价' },
-  { key: 'finalPrice', type: '到手价' },
   { key: 'productCost', type: '成本' },
   { key: 'activity', type: '活动' },
   { key: 'activityPrice', type: '活动价' },

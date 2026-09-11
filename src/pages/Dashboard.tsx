@@ -16,7 +16,7 @@ export function Dashboard() {
     ['甲方', data.clients.length, Building2, 'blue'], ['店铺', data.stores.length, Store, 'violet'],
     ['商品链接', data.productLinks.length, Link2, 'cyan'], ['SKU', data.skus.length, Box, 'indigo'],
   ] as const
-  const recent = [...data.operations].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
+  const recent = data.operations.filter(operation => operation.type !== '到手价').sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
   const datedTodos = data.todos.filter(todo => todo.date === todoDate).sort((a, b) => Number(a.completed) - Number(b.completed) || a.createdAt.localeCompare(b.createdAt))
   const todoStores = data.stores.filter(store => !todoClientId || store.clientId === todoClientId)
   const addTodo = () => {

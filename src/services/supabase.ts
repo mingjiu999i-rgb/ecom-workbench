@@ -35,6 +35,7 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
       || productCosts.find(cost => cost.productId === link?.productId && cost.skuCode === sku.skuId)
     return {
       ...sku,
+      finalPrice: Number(sku.salePrice || 0),
       activityPrice: Number(sku.activityPrice || 0),
       productCostId: linkedCost?.id || '',
       productCost: linkedCost?.totalCost ?? sku.productCost,

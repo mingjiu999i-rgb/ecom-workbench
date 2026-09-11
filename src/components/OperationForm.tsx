@@ -5,7 +5,7 @@ import type { AdjustmentReason, AdjustmentType, Operation, Sku } from '../types/
 import { appendSkuHistory } from '../utils/skuHistory'
 import { calculatedBreakEvenRoi, totalCost } from '../utils/calculations'
 
-const types: AdjustmentType[] = ['售价', '到手价', '成本', '投产', '活动', '活动价', 'SKU', '其他']
+const types: AdjustmentType[] = ['售价', '成本', '投产', '活动', '活动价', 'SKU', '其他']
 const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '手动修改', '其他']
 const activities = ['无活动', '平台活动', '店铺活动', '百亿补贴', '其他'] as const
 
@@ -99,8 +99,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
 
 function syncSku(sku: Sku, type: AdjustmentType, value: string): Sku {
   const numeric = Number(value)
-  if (type === '售价' && Number.isFinite(numeric)) return { ...sku, salePrice: numeric, breakEvenRoi: calculatedBreakEvenRoi(numeric, totalCost(sku)) }
-  if (type === '到手价') return { ...sku, finalPrice: Number.isFinite(numeric) ? numeric : sku.finalPrice }
+  if (type === '售价' && Number.isFinite(numeric)) return { ...sku, salePrice: numeric, finalPrice: numeric, breakEvenRoi: calculatedBreakEvenRoi(numeric, totalCost(sku)) }
   if (type === '成本') return { ...sku, productCost: Number.isFinite(numeric) ? numeric : sku.productCost }
   if (type === '投产') return { ...sku, currentRoi: Number.isFinite(numeric) ? numeric : sku.currentRoi }
   if (type === '活动') return { ...sku, activity: value as Sku['activity'] }
