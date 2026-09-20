@@ -4,6 +4,7 @@ import { createId, useWorkbench } from '../store/workbench'
 import type { AdjustmentReason, AdjustmentType, Operation, Sku } from '../types/models'
 import { appendSkuHistory } from '../utils/skuHistory'
 import { calculatedBreakEvenRoi, totalCost } from '../utils/calculations'
+import { isActiveProductLink } from '../utils/selectors'
 
 const types: AdjustmentType[] = ['售价', '成本', '投产', '活动', '活动价', 'SKU', '其他']
 const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '手动修改', '其他']
@@ -32,15 +33,16 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
   const [reason, setReason] = useState<AdjustmentReason>('平台比价')
   const [remark, setRemark] = useState('')
   const [createdAt, setCreatedAt] = useState(new Date().toISOString().slice(0, 16))
+  const availableLinks = data.productLinks.filter(link => isActiveProductLink(data, link.id) || link.id === firstLink?.id)
   const skus = data.skus.filter(s => !linkId || s.productLinkId === linkId)
   const selectedClient = data.clients.find(x => x.id === clientId)
   const selectedStore = data.stores.find(x => x.id === storeId)
   const selectedProduct = data.products.find(x => x.id === productId)
   const matchingLinks = useMemo(() => {
     const query = productIdInput.trim().toLowerCase()
-    if (!query || data.productLinks.some(link => link.linkId.toLowerCase() === query)) return []
-    return data.productLinks.filter(link => link.linkId.toLowerCase().includes(query)).slice(0, 8)
-  }, [data.productLinks, productIdInput])
+    if (!query || availableLinks.some(link => link.linkId.toLowerCase() === query)) return []
+    return availableLinks.filter(link => link.linkId.toLowerCase().includes(query)).slice(0, 8)
+  }, [availableLinks, productIdInput])
   const valid = clientId && storeId && productId && linkId && skuId && after.trim()
 
   const setTypeAndBefore = (next: AdjustmentType) => { setType(next); setBefore(currentValue(selectedSku, next)); setAfter('') }
@@ -61,7 +63,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
   }
   const enterProductId = (value: string) => {
     setProductIdInput(value)
-    const exact = data.productLinks.find(link => link.linkId.toLowerCase() === value.trim().toLowerCase())
+    const exact = availableLinks.find(link => link.linkId.toLowerCase() === value.trim().toLowerCase())
     if (exact) chooseLink(exact.id, value)
     else { setClientId(''); setStoreId(''); setProductId(''); setLinkId(''); setSkuId(''); setBefore('') }
   }

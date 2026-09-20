@@ -3,6 +3,7 @@ import { Cloud, LoaderCircle, LockKeyhole, Mail } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { isSupabaseConfigured, loadWorkbench, saveWorkbench, supabase } from '../services/supabase'
 import type { WorkbenchData } from '../types/models'
+import { isActiveProductLink } from '../utils/selectors'
 
 type SyncStatus = 'saved' | 'saving' | 'error'
 interface WorkbenchContextValue {
@@ -65,7 +66,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       description: '读取当前云端工作台的甲方、店铺、商品链接和 SKU 数量。',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute: () => ({ clients: data.clients.length, stores: data.stores.length, productLinks: data.productLinks.length, skus: data.skus.length }),
+      execute: () => {
+        const activeLinkIds = new Set(data.productLinks.filter(link => isActiveProductLink(data, link.id)).map(link => link.id))
+        return { clients: data.clients.length, stores: data.stores.filter(store => store.storeStatus !== '暂停').length, productLinks: activeLinkIds.size, skus: data.skus.filter(sku => activeLinkIds.has(sku.productLinkId)).length }
+      },
     }, { signal: lifecycle.signal })).catch(report)
     return () => lifecycle.abort()
   }, [data])

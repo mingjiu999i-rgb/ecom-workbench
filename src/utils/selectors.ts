@@ -1,5 +1,15 @@
 import type { WorkbenchData } from '../types/models'
 
+export const isActiveStore = (data: WorkbenchData, storeId: string) => {
+  const store = data.stores.find(item => item.id === storeId)
+  return Boolean(store && store.storeStatus !== '暂停')
+}
+
+export const isActiveProductLink = (data: WorkbenchData, linkId: string) => {
+  const link = data.productLinks.find(item => item.id === linkId)
+  return Boolean(link && link.status !== '已挂' && isActiveStore(data, link.storeId))
+}
+
 export function getSkuContext(data: WorkbenchData, skuId: string) {
   const sku = data.skus.find(item => item.id === skuId)
   const link = data.productLinks.find(item => item.id === sku?.productLinkId)

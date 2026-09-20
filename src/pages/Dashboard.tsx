@@ -2,7 +2,7 @@ import { ArrowRight, Box, Building2, CalendarDays, Check, Circle, Link2, Plus, S
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createId, useWorkbench } from '../store/workbench'
-import { displayDate, getSkuContext } from '../utils/selectors'
+import { displayDate, getSkuContext, isActiveProductLink } from '../utils/selectors'
 
 export function Dashboard() {
   const { data, update } = useWorkbench()
@@ -12,13 +12,16 @@ export function Dashboard() {
   const [todoTitle, setTodoTitle] = useState('')
   const [todoClientId, setTodoClientId] = useState('')
   const [todoStoreId, setTodoStoreId] = useState('')
+  const activeStores = data.stores.filter(store => store.storeStatus !== '暂停')
+  const activeLinks = data.productLinks.filter(link => isActiveProductLink(data, link.id))
+  const activeLinkIds = new Set(activeLinks.map(link => link.id))
   const metrics = [
-    ['甲方', data.clients.length, Building2, 'blue'], ['店铺', data.stores.length, Store, 'violet'],
-    ['商品链接', data.productLinks.length, Link2, 'cyan'], ['SKU', data.skus.length, Box, 'indigo'],
+    ['甲方', data.clients.length, Building2, 'blue'], ['店铺', activeStores.length, Store, 'violet'],
+    ['商品链接', activeLinks.length, Link2, 'cyan'], ['SKU', data.skus.filter(sku => activeLinkIds.has(sku.productLinkId)).length, Box, 'indigo'],
   ] as const
-  const recent = data.operations.filter(operation => operation.type !== '到手价').sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
+  const recent = data.operations.filter(operation => operation.type !== '到手价' && isActiveProductLink(data, operation.productLinkId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
   const datedTodos = data.todos.filter(todo => todo.date === todoDate).sort((a, b) => Number(a.completed) - Number(b.completed) || a.createdAt.localeCompare(b.createdAt))
-  const todoStores = data.stores.filter(store => !todoClientId || store.clientId === todoClientId)
+  const todoStores = activeStores.filter(store => !todoClientId || store.clientId === todoClientId)
   const addTodo = () => {
     const title = todoTitle.trim()
     if (!title) return
@@ -36,8 +39,8 @@ export function Dashboard() {
     <div className="dashboard-grid">
       <section className="panel"><div className="panel-heading"><div><h2>甲方概览</h2><p>点击甲方查看对应商品</p></div></div>
         <div className="client-list">{data.clients.map(client => {
-          const stores = data.stores.filter(s => s.clientId === client.id)
-          const links = data.productLinks.filter(l => l.clientId === client.id)
+          const stores = activeStores.filter(s => s.clientId === client.id)
+          const links = activeLinks.filter(l => l.clientId === client.id)
           const linkIds = new Set(links.map(l => l.id))
           return <button key={client.id} onClick={() => navigate(`/products?client=${client.id}`)} className="client-row"><div className="client-avatar">{client.name.slice(-1)}</div><div className="client-name"><strong>{client.name}</strong><span>{stores.length} 家店铺</span></div><div className="client-stat"><b>{links.length}</b><span>商品</span></div><div className="client-stat"><b>{data.skus.filter(s => linkIds.has(s.productLinkId)).length}</b><span>SKU</span></div><ArrowRight size={17} /></button>
         })}</div>

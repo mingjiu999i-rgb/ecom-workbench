@@ -8,8 +8,8 @@ export const initialClients = [
 ]
 
 export const initialStores = [
-  { id: 'store-pdd', clientId: 'client-a', name: '示例拼多多店', platform: '拼多多' as const },
-  { id: 'store-tb', clientId: 'client-b', name: '示例淘宝店', platform: '淘宝' as const },
+  { id: 'store-pdd', clientId: 'client-a', name: '示例拼多多店', platform: '拼多多' as const, storeStatus: '启用' as const },
+  { id: 'store-tb', clientId: 'client-b', name: '示例淘宝店', platform: '淘宝' as const, storeStatus: '启用' as const },
 ]
 
 export const initialProducts = [
