@@ -9,7 +9,7 @@ const items = [
   { to: '/product-costs', label: '产品成本', icon: Calculator },
   { to: '/operations', label: '调整记录', icon: ClipboardList },
   { to: '/master-data', label: '基础资料', icon: Database },
-  { to: '/pdd-analyzer', label: '订单利润', icon: ReceiptText },
+  { to: '/pdd-analyzer', label: '订单回款', icon: ReceiptText },
 ]
 
 export function Layout() {
