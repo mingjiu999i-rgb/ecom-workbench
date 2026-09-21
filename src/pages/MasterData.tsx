@@ -31,24 +31,30 @@ export function MasterData() {
   const [batchLinkId, setBatchLinkId] = useState('')
   const [batchText, setBatchText] = useState('')
   const [batchRows, setBatchRows] = useState<BatchRow[]>([])
+  const [batchParseError, setBatchParseError] = useState('')
   const isEdit = Boolean(draft?.id)
   const openNew = () => setDraft(tab === 'stores' ? { clientId: data.clients[0]?.id, platform: '拼多多', storeStatus: '启用' } : tab === 'products' ? { clientId: data.clients[0]?.id } : tab === 'links' ? { clientId: data.clients[0]?.id, storeId: '', productId: '', status: '日销' } : tab === 'skus' ? { productLinkId: '', productCostId: '', name: '', salePrice: 0 } : {})
 
   const batchCosts = data.productCosts.filter(cost => cost.productId === data.productLinks.find(link => link.id === batchLinkId)?.productId)
   const parseBatch = () => {
     const normalize = (value: string) => value.toLowerCase().replace(/[\s【】\[\]（）()*/×]/g, '')
-    const rows = batchText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
-      const cells = line.split(/\t|,|，/).map(cell => cell.trim()).filter(Boolean)
-      const price = Number(cells.at(-1))
-      const name = cells.slice(0, -1).join(' ')
+    const lines = batchText.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const parsed = lines.map(line => {
+      const match = line.match(/^(.*?)(?:\t+|[,，]\s*|\s+)[¥￥]?\s*(\d+(?:\.\d+)?)\s*$/)
+      if (!match) return null
+      const name = match[1].trim()
+      const price = Number(match[2])
       const key = normalize(name)
       const matches = batchCosts.filter(cost => {
         const spec = normalize(cost.specification)
         return spec.length >= 3 && (key.includes(spec) || spec.includes(key))
       })
       return { name, price, productCostId: matches.length === 1 ? matches[0].id : '' }
-    }).filter(row => row.name && Number.isFinite(row.price) && row.price > 0)
+    })
+    const rows = parsed.filter((row): row is BatchRow => Boolean(row?.name && Number.isFinite(row.price) && row.price > 0))
+    const invalidCount = lines.length - rows.length
     setBatchRows(rows)
+    setBatchParseError(!rows.length ? '未识别到有效数据。请确保每行末尾是售价，名称与售价之间用空格、Tab 或逗号分隔。' : invalidCount ? `有 ${invalidCount} 行格式未识别，已解析其余 ${rows.length} 行。` : '')
   }
   const saveBatch = () => {
     if (!batchLinkId || !batchRows.length || batchRows.some(row => !row.productCostId)) return
@@ -65,7 +71,7 @@ export function MasterData() {
       })
       return { ...current, skus: [...current.skus, ...additions] }
     })
-    setBatchOpen(false); setBatchText(''); setBatchRows([])
+    setBatchOpen(false); setBatchText(''); setBatchRows([]); setBatchParseError('')
   }
 
   const save = () => {
@@ -138,9 +144,10 @@ export function MasterData() {
       {tab === 'skus' && <><Field label="商品 ID" full><Select value={draft.productLinkId || ''} onChange={e => setDraft({ ...draft, productLinkId: e.target.value, productCostId: '' })}><option value="">请选择商品 ID</option>{data.productLinks.map(link => { const product = data.products.find(x => x.id === link.productId); const client = data.clients.find(x => x.id === product?.clientId); return <option key={link.id} value={link.id}>{link.linkId} · {client?.name} · {product?.name}</option> })}</Select></Field><Field label="售卖 SKU 名称" full><Input autoFocus value={draft.name || ''} onChange={e => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="SKU 编码" full><Select value={draft.productCostId || ''} onChange={e => setDraft({ ...draft, productCostId: e.target.value })}><option value="">{selectedLink && !costsForSku.length ? '该产品暂无成本 SKU' : '请从产品成本库选择'}</option>{costsForSku.map(cost => <option key={cost.id} value={cost.id}>{cost.skuCode} · {cost.specification}</option>)}</Select></Field><Field label="成本（自动同步）"><Input value={money(skuCost)} readOnly /></Field><Field label="售价"><Input type="number" min="0" step="0.01" value={draft.salePrice ?? 0} onChange={e => setDraft({ ...draft, salePrice: e.target.value === '' ? 0 : Number(e.target.value) })} /></Field><div className="profit-strip" style={{ gridColumn: '1 / -1' }}><div><span>毛利</span><strong>{money(skuProfit)}</strong></div><div><span>毛利率</span><strong>{percent(skuMargin)}</strong></div><div><span>保本 ROI</span><strong>{calculatedBreakEvenRoi(skuPrice, skuCost).toFixed(2)}</strong></div></div></>}
     </div><div className="modal-actions"><button className="button ghost" onClick={() => setDraft(null)}>取消</button><button className="button primary" disabled={!valid} onClick={save}>保存</button></div></Modal>}
     {batchOpen && <Modal title="批量导入 SKU" wide onClose={() => setBatchOpen(false)}><div className="batch-import modal-body">
-      <Field label="商品 ID" full><Select value={batchLinkId} onChange={e => { setBatchLinkId(e.target.value); setBatchRows([]) }}><option value="">请选择商品 ID</option>{data.productLinks.map(link => { const product = data.products.find(x => x.id === link.productId); const client = data.clients.find(x => x.id === link.clientId); return <option key={link.id} value={link.id}>{link.linkId} · {client?.name} · {product?.name}</option> })}</Select></Field>
-      <Field label="粘贴数据（每行：SKU 名称 + Tab + 售价）" full><Textarea rows={8} value={batchText} onChange={e => { setBatchText(e.target.value); setBatchRows([]) }} placeholder={'2袋原味【2*125g/包】含花青素\t19.50\n2袋麻辣【2*125g/包】含花青素\t19.50'} /></Field>
+      <Field label="商品 ID" full><Select value={batchLinkId} onChange={e => { setBatchLinkId(e.target.value); setBatchRows([]); setBatchParseError('') }}><option value="">请选择商品 ID</option>{data.productLinks.map(link => { const product = data.products.find(x => x.id === link.productId); const client = data.clients.find(x => x.id === link.clientId); return <option key={link.id} value={link.id}>{link.linkId} · {client?.name} · {product?.name}</option> })}</Select></Field>
+      <Field label="粘贴数据（每行：SKU 名称 + 空格 / Tab / 逗号 + 售价）" full><Textarea rows={8} value={batchText} onChange={e => { setBatchText(e.target.value); setBatchRows([]); setBatchParseError('') }} placeholder={'2袋原味【2*125g/包】含花青素 19.50\n2袋麻辣【2*125g/包】含花青素 19.50'} /></Field>
       <button className="button secondary" disabled={!batchLinkId || !batchText.trim()} onClick={parseBatch}>解析并匹配成本</button>
+      {batchParseError && <div className="form-error">{batchParseError}</div>}
       {batchRows.length > 0 && <div className="table-scroll batch-preview"><table><thead><tr><th>售卖 SKU 名称</th><th>售价</th><th>成本 SKU</th></tr></thead><tbody>{batchRows.map((row, index) => <tr key={`${row.name}-${index}`}><td>{row.name}</td><td>{money(row.price)}</td><td><Select value={row.productCostId} onChange={e => setBatchRows(current => current.map((item, i) => i === index ? { ...item, productCostId: e.target.value } : item))}><option value="">请选择成本 SKU</option>{batchCosts.map(cost => <option key={cost.id} value={cost.id}>{cost.skuCode} · {cost.specification} · {money(cost.totalCost)}</option>)}</Select></td></tr>)}</tbody></table></div>}
       {batchRows.length > 0 && batchRows.some(row => !row.productCostId) && <div className="form-error">请为未自动匹配的行选择成本 SKU。</div>}
     </div><div className="modal-actions"><button className="button ghost" onClick={() => setBatchOpen(false)}>取消</button><button className="button primary" disabled={!batchRows.length || batchRows.some(row => !row.productCostId)} onClick={saveBatch}>导入 {batchRows.length || ''} 条 SKU</button></div></Modal>}
