@@ -2,9 +2,10 @@ import JSZip from 'jszip'
 import { Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import * as XLSX from '@e965/xlsx'
+import { useWorkbench } from '../store/workbench'
 
 type Row = Record<string, string | number>
-type Order = { id: string; shop: string; payTime: string; payDate: string; receipt: number; status: string; skuCode: string; quantity: number }
+type Order = { id: string; shop: string; payTime: string; payDate: string; receipt: number; status: string; productId: string; specification: string; skuCode: string; quantity: number }
 type Refund = { id: string; orderId: string; shop: string; status: string; stage: string }
 type FundCategory = 'positive' | 'refund' | 'other' | 'transfer' | 'promotion' | 'unknown'
 type Fund = { key: string; orderId: string; shop: string; income: number; expense: number; category: FundCategory }
@@ -14,7 +15,6 @@ type Summary = { shop: string; date: string; orderCount: number; originalSales: 
 const money = (value: number | null) => value == null ? '待补成本' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const text = (value: unknown) => value == null ? '' : String(value).replace(/\t/g, '').trim()
 const amount = (value: unknown) => Math.round((Number(text(value).replace(/[,¥￥]/g, '')) || 0) * 100) / 100
-const normalizeHeader = (value: unknown) => text(value).replace(/[\s_\-（）()]/g, '').toLowerCase()
 const dateText = (value: unknown) => {
   if (value instanceof Date) return value.toLocaleDateString('sv-SE')
   const raw = text(value).replace(/\//g, '-').replace(/年|月/g, '-').replace(/日/g, '')
@@ -62,13 +62,14 @@ const promotionColumns = (headers: Set<string>) => {
 }
 
 export function PddAnalyzer() {
+  const { data } = useWorkbench()
   const inputRef = useRef<HTMLInputElement>(null)
   const [shop, setShop] = useState('')
   const [orders, setOrders] = useState<Map<string, Order>>(new Map())
   const [refunds, setRefunds] = useState<Map<string, Refund>>(new Map())
   const [funds, setFunds] = useState<Map<string, Fund>>(new Map())
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map())
-  const [costs, setCosts] = useState<Map<string, number>>(new Map())
+  const [manualCosts, setManualCosts] = useState<Map<string, number>>(new Map())
   const [messages, setMessages] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -76,27 +77,18 @@ export function PddAnalyzer() {
   const importTable = (name: string, table: unknown[][], targetShop: string) => {
     const headerIndex = table.slice(0, 30).findIndex(row => {
       const set = new Set(row.map(text))
-      const normalized = new Set(row.map(normalizeHeader))
       const promo = promotionColumns(set)
       return (set.has('订单号') && (set.has('支付时间') || set.has('订单成交时间')))
         || (set.has('售后编号') && set.has('订单编号'))
         || (set.has('商户订单号') && set.has('发生时间'))
         || Boolean(promo.date && promo.spend)
-        || ([...normalized].some(x => ['sku编码', 'skucode', '商家编码规格维度'].includes(x)) && [...normalized].some(x => ['总成本', '总成本元', '单件总成本', '单件总成本元'].includes(x)))
     })
     if (headerIndex < 0) throw new Error(`${name}：找不到支持的报表表头`)
     const headers = table[headerIndex].map(text)
     const headerSet = new Set(headers)
     const rows = table.slice(headerIndex + 1).filter(row => row.some(cell => text(cell))).map(row => rowObject(headers, row))
-    const normalized = headers.map(normalizeHeader)
-    const skuColumn = normalized.findIndex(x => ['sku编码', 'skucode', '商家编码规格维度'].includes(x))
-    const costColumn = normalized.findIndex(x => ['总成本', '总成本元', '单件总成本', '单件总成本元'].includes(x))
-    if (skuColumn >= 0 && costColumn >= 0) {
-      setCosts(current => { const next = new Map(current); for (const row of table.slice(headerIndex + 1)) { const sku = text(row[skuColumn]); if (sku && !['合计', '总计'].includes(sku)) next.set(`${targetShop}|${sku}`, amount(row[costColumn])) } return next })
-      return `成本 ${rows.length} 行`
-    }
     if (headerSet.has('订单号') && (headerSet.has('支付时间') || headerSet.has('订单成交时间'))) {
-      setOrders(current => { const next = new Map(current); rows.forEach(row => { const id = text(row['订单号']); const payTime = text(row['支付时间'] || row['订单成交时间']); if (id) next.set(id, { id, shop: targetShop, payTime, payDate: dateText(payTime), receipt: amount(row['商家实收金额(元)']), status: text(row['订单状态']), skuCode: text(row['商家编码-规格维度']), quantity: Number(row['商品数量(件)'] || 0) }) }); return next })
+      setOrders(current => { const next = new Map(current); rows.forEach(row => { const id = text(row['订单号']); const payTime = text(row['支付时间'] || row['订单成交时间']); if (id) next.set(id, { id, shop: targetShop, payTime, payDate: dateText(payTime), receipt: amount(row['商家实收金额(元)']), status: text(row['订单状态']), productId: text(row['商品id']), specification: text(row['商品规格']), skuCode: text(row['商家编码-规格维度']), quantity: Number(row['商品数量(件)'] || 0) }) }); return next })
       return `订单 ${rows.length} 行`
     }
     if (headerSet.has('售后编号') && headerSet.has('订单编号')) {
@@ -132,9 +124,31 @@ export function PddAnalyzer() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '导入失败') } finally { setBusy(false); if (inputRef.current) inputRef.current.value = '' }
   }
 
-  const summaries = useMemo(() => calculateSummaries([...orders.values()], [...refunds.values()], [...funds.values()], [...promotions.values()], costs), [orders, refunds, funds, promotions, costs])
+  const libraryCosts = useMemo(() => {
+    const storeClientId = data.stores.find(item => item.name.trim() === shop.trim())?.clientId
+    const preferred = storeClientId ? data.productCosts.filter(item => data.products.find(product => product.id === item.productId)?.clientId === storeClientId) : data.productCosts
+    const fallback = storeClientId ? data.productCosts : []
+    const matches = new Map<string, { cost: number; product: string; specification: string }>()
+    for (const item of [...fallback, ...preferred]) {
+      const code = item.skuCode.trim()
+      if (!code) continue
+      matches.set(code, { cost: Number(item.totalCost), product: data.products.find(product => product.id === item.productId)?.name || '未关联商品', specification: item.specification })
+    }
+    return matches
+  }, [data.productCosts, data.products, data.stores, shop])
+  const resolvedCosts = useMemo(() => {
+    const result = new Map(manualCosts)
+    libraryCosts.forEach((match, code) => result.set(`${shop.trim()}|${code}`, match.cost))
+    return result
+  }, [manualCosts, libraryCosts, shop])
+  const skuRows = useMemo(() => {
+    const grouped = new Map<string, { code: string; productId: string; specification: string; quantity: number }>()
+    orders.forEach(order => { if (!order.skuCode) return; const row = grouped.get(order.skuCode) || { code: order.skuCode, productId: order.productId, specification: order.specification, quantity: 0 }; row.quantity += order.quantity; grouped.set(order.skuCode, row) })
+    return [...grouped.values()].sort((a, b) => a.code.localeCompare(b.code, 'zh-CN'))
+  }, [orders])
+  const summaries = useMemo(() => calculateSummaries([...orders.values()], [...refunds.values()], [...funds.values()], [...promotions.values()], resolvedCosts), [orders, refunds, funds, promotions, resolvedCosts])
   const total = useMemo(() => combine(summaries), [summaries])
-  const clear = () => { setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setCosts(new Map()); setMessages([]); setError('') }
+  const clear = () => { setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCosts(new Map()); setMessages([]); setError('') }
   const exportResult = () => {
     if (!total) return
     const summaryRows = [total, ...summaries].map(s => ({ 店铺名称: s.shop, 成交日期: s.date, 订单数: s.orderCount, 订单成交额: s.originalSales, 有效订单销售额: s.effectiveSales, 已发货退款: s.shippedRefund, 其他扣款: s.otherDeductions, 商品成本: s.productCost, 推广费: s.promotionFee, 预估盈亏: s.estimatedProfit, 订单净回款: s.currentNet, 回款差额: s.collectionGap, 当前盈亏: s.profit, 入账完成率: s.completionRate, 入账状态: s.mature ? '入账已完成' : '入账未完成' }))
@@ -149,9 +163,10 @@ export function PddAnalyzer() {
   return <div className="page page-wide pdd-page">
     <div className="page-heading"><div><span className="eyebrow">浏览器临时计算</span><h1>拼多多订单经营分析</h1><p>导入报表后在当前页面计算；不上传、不保存，刷新页面即清空。</p></div><div className="heading-actions"><button className="button secondary" onClick={clear}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!total} onClick={exportResult}><Download size={16} />导出 Excel</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>仅保留计算逻辑</strong><span>报表内容只存在当前浏览器内存中，不会进入工作台云端数据库。</span></div></section>
-    <section className="panel pdd-import"><div><label className="field"><span>本批表头店铺名称</span><input value={shop} onChange={event => setShop(event.target.value)} placeholder="例如：果老二生鲜" /></label><p>一次选择同一店铺的订单、退款、资金、推广费和 SKU 成本文件；支持 CSV、XLS、XLSX、ZIP。</p></div><button className="button primary" disabled={busy} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
+    <section className="panel pdd-import"><div><label className="field"><span>本批表头店铺名称</span><input value={shop} onChange={event => setShop(event.target.value)} placeholder="例如：果老二生鲜" /></label><p>一次选择同一店铺的订单、退款、资金和推广费文件；支持 CSV、XLS、XLSX、ZIP。</p></div><button className="button primary" disabled={busy} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
     {error && <div className="pdd-message error">{error}</div>}
     {messages.length > 0 && <div className="pdd-message ok"><FileSpreadsheet size={16} /><span>{messages.join('；')}</span></div>}
+    {skuRows.length > 0 && <section className="panel table-panel pdd-cost-panel"><div className="table-caption"><div><strong>SKU 成本匹配</strong><span>优先自动匹配产品成本库；未匹配项可手动填写本次成本。匹配字段：商家编码-规格维度＝SKU 编码。</span></div><div className="cost-count"><b>{skuRows.filter(row => libraryCosts.has(row.code)).length}</b> 个自动匹配 · <b>{skuRows.filter(row => !libraryCosts.has(row.code) && manualCosts.has(`${shop.trim()}|${row.code}`)).length}</b> 个手动填写 · <b>{skuRows.filter(row => !libraryCosts.has(row.code) && !manualCosts.has(`${shop.trim()}|${row.code}`)).length}</b> 个待填写</div></div><div className="table-scroll"><table><thead><tr><th>SKU 编码</th><th>报表商品/规格</th><th>售出数量</th><th>成本来源</th><th>单件总成本</th></tr></thead><tbody>{skuRows.map(row => { const automatic = libraryCosts.get(row.code); const manualKey = `${shop.trim()}|${row.code}`; return <tr key={row.code}><td><strong className="cell-main">{row.code}</strong></td><td><div className="cell-main">{automatic?.product || row.productId || '未填写商品ID'}</div><div className="cell-sub">{automatic?.specification || row.specification || '未填写规格'}</div></td><td>{row.quantity}</td><td>{automatic ? <span className="link-status status-日销">成本库自动匹配</span> : <span className="link-status status-备用">手动填写</span>}</td><td>{automatic ? <strong className="positive">{money(automatic.cost)}</strong> : <input className="cost-input" type="number" min="0" step="0.01" placeholder="填写单件总成本" value={manualCosts.get(manualKey) ?? ''} onChange={event => setManualCosts(current => { const next = new Map(current); if (event.target.value === '') next.delete(manualKey); else next.set(manualKey, Number(event.target.value)); return next })} />}</td></tr> })}</tbody></table></div></section>}
     {total ? <><section className="pdd-metrics">{[['有效订单销售额', money(total.effectiveSales)], ['订单净回款', money(total.currentNet)], ['回款差额', money(total.collectionGap)], ['推广费', money(total.promotionFee)], ['当前盈亏', money(total.profit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section>
       <section className="panel table-panel"><div className="table-caption"><div><strong>每日经营主表</strong><span>回款差额＝有效订单销售额－订单净回款；推广费单独计入盈亏。</span></div></div><div className="table-scroll"><table><thead><tr>{['成交日期','订单数','订单成交额','有效订单销售额','已发货退款','其他扣款','商品成本','推广费','预估盈亏','订单净回款','回款差额','当前盈亏','入账状态'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{[total, ...summaries].map((s, index) => <tr key={`${s.date}-${index}`}><td className="cell-main">{index === 0 ? `累计：${s.date}` : s.date}</td><td>{s.orderCount}</td><td>{money(s.originalSales)}</td><td>{money(s.effectiveSales)}</td><td>{money(s.shippedRefund)}</td><td>{money(s.otherDeductions)}</td><td>{money(s.productCost)}</td><td>{money(s.promotionFee)}</td><td>{money(s.estimatedProfit)}</td><td>{money(s.currentNet)}</td><td>{money(s.collectionGap)}</td><td className={s.profit != null && s.profit < 0 ? 'negative' : 'positive'}>{money(s.profit)}</td><td><span className={`status ${s.mature ? 'normal' : 'risk'}`}><i />{s.mature ? '已完成' : '未完成'}</span></td></tr>)}</tbody></table></div></section>
     </> : <section className="panel pdd-empty"><FileSpreadsheet size={28} /><strong>尚未导入报表</strong><span>填写店铺名称后，一次选择该店铺的全部报表。</span></section>}
