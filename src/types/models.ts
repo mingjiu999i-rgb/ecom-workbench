@@ -7,7 +7,7 @@ export type AdjustmentReason = '平台比价' | '竞品变化' | '报活动' | '
 
 export interface Client { id: string; name: string; remark: string }
 export interface Store { id: string; clientId: string; name: string; platform: Platform; storeStatus: StoreStatus }
-export interface Product { id: string; clientId: string; name: string; remark: string }
+export interface Product { id: string; clientId: string; name: string; operationRate: number; remark: string }
 export interface ProductCost {
   id: string; productId: string; skuCode: string; specification: string; totalCost: number
 }

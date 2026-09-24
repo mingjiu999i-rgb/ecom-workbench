@@ -13,8 +13,8 @@ export const initialStores = [
 ]
 
 export const initialProducts = [
-  { id: 'product-a', clientId: 'client-a', name: '示例产品A', remark: '' },
-  { id: 'product-b', clientId: 'client-b', name: '示例产品B', remark: '' },
+  { id: 'product-a', clientId: 'client-a', name: '示例产品A', operationRate: 0.02, remark: '' },
+  { id: 'product-b', clientId: 'client-b', name: '示例产品B', operationRate: 0.02, remark: '' },
 ]
 
 export const initialData: WorkbenchData = {

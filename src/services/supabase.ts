@@ -15,7 +15,8 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   const products = (value.products || []).map(product => {
     const legacyCost = legacyCosts.find(cost => cost.productId === product.id) as (typeof legacyCosts[number] & { clientId?: string }) | undefined
     const link = (value.productLinks || []).find(item => item.productId === product.id)
-    return { ...product, clientId: product.clientId || legacyCost?.clientId || link?.clientId || '' }
+    const defaultRate = product.name.includes('百香果') ? 0.025 : product.name.includes('薯片') || product.name.includes('土豆片') ? 0.03 : 0.02
+    return { ...product, clientId: product.clientId || legacyCost?.clientId || link?.clientId || '', operationRate: Number.isFinite(product.operationRate) ? product.operationRate : defaultRate }
   })
   const productCosts = hasProductCosts
     ? legacyCosts.map(cost => ({ id: cost.id, productId: cost.productId || '', skuCode: cost.skuCode, specification: cost.specification, totalCost: cost.totalCost }))
