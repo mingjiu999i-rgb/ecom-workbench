@@ -1,9 +1,9 @@
 import JSZip from 'jszip'
 import { BarChart3, Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from '@e965/xlsx'
 import { useWorkbench } from '../store/workbench'
-import type { ProductCost } from '../types/models'
+import type { ProductCost, ProfitRecord } from '../types/models'
 
 type Row = Record<string, string | number>
 type ProfitOrder = { key: string; orderId: string; date: string; skuCode: string; specification: string; productItemId: string; quantity: number; receipt: number; status: string }
@@ -43,7 +43,7 @@ function parseTable(data: ArrayBuffer, name: string): unknown[][] {
 }
 
 export function ProfitPreview() {
-  const { data } = useWorkbench()
+  const { data, update, syncStatus } = useWorkbench()
   const inputRef = useRef<HTMLInputElement>(null)
   const [storeId, setStoreId] = useState('')
   const [orders, setOrders] = useState<Map<string, ProfitOrder>>(new Map())
@@ -58,6 +58,8 @@ export function ProfitPreview() {
   const productIds = new Set(clientProducts.map(product => product.id))
   const availableCosts = data.productCosts.filter(cost => productIds.has(cost.productId))
   const activeStores = data.stores.filter(item => item.storeStatus !== '暂停')
+  const savedRecords = useMemo(() => data.profitRecords.filter(record => record.storeId === storeId).sort((a, b) => b.date.localeCompare(a.date) || a.productId.localeCompare(b.productId)), [data.profitRecords, storeId])
+  const savedPromotions = useMemo(() => new Map(savedRecords.map(record => [`${record.date}|${record.productId}`, record.promotion])), [savedRecords])
 
   const clearResults = () => { setOrders(new Map()); setManualMatches(new Map()); setPromotions(new Map()); setMessages([]); setError('') }
 
@@ -98,14 +100,35 @@ export function ProfitPreview() {
       row.amount += order.receipt; row.cost += order.quantity * match.cost.totalCost; row.quantity += order.quantity; rows.set(key, row)
     })
     return [...rows.values()].map(row => {
-      const promotion = promotions.get(`${row.date}|${row.productId}`) || 0
+      const recordKey = `${row.date}|${row.productId}`
+      const promotion = promotions.has(recordKey) ? promotions.get(recordKey) || 0 : savedPromotions.get(recordKey) || 0
       const amount = round(row.amount), cost = round(row.cost), grossProfit = round(amount - cost), operationFee = round(amount * row.rate), estimatedProfit = round(grossProfit - promotion - operationFee)
       return { ...row, amount, cost, grossProfit, promotion, operationFee, estimatedProfit, quantity: round(row.quantity), margin: amount ? estimatedProfit / amount : 0 }
     }).sort((a, b) => b.date.localeCompare(a.date) || a.product.localeCompare(b.product, 'zh-CN'))
-  }, [orders, manualMatches, promotions, data.products, data.productCosts, storeId])
+  }, [orders, manualMatches, promotions, savedPromotions, data.products, data.productCosts, storeId])
 
   const unmatched = skuGroups.filter(group => !group.match)
   const total = useMemo(() => metrics.length ? metrics.reduce((sum, row) => ({ amount: sum.amount + row.amount, cost: sum.cost + row.cost, grossProfit: sum.grossProfit + row.grossProfit, promotion: sum.promotion + row.promotion, operationFee: sum.operationFee + row.operationFee, estimatedProfit: sum.estimatedProfit + row.estimatedProfit, quantity: sum.quantity + row.quantity }), { amount: 0, cost: 0, grossProfit: 0, promotion: 0, operationFee: 0, estimatedProfit: 0, quantity: 0 }) : null, [metrics])
+  const savedTotal = useMemo(() => savedRecords.length ? savedRecords.reduce((sum, row) => ({ amount: sum.amount + row.amount, cost: sum.cost + row.cost, grossProfit: sum.grossProfit + row.grossProfit, promotion: sum.promotion + row.promotion, operationFee: sum.operationFee + row.operationFee, estimatedProfit: sum.estimatedProfit + row.estimatedProfit, quantity: sum.quantity + row.quantity }), { amount: 0, cost: 0, grossProfit: 0, promotion: 0, operationFee: 0, estimatedProfit: 0, quantity: 0 }) : null, [savedRecords])
+
+  useEffect(() => {
+    if (!storeId || !orders.size || !metrics.length || unmatched.length) return
+    const fields: (keyof ProfitRecord)[] = ['amount', 'cost', 'grossProfit', 'promotion', 'operationRate', 'operationFee', 'estimatedProfit', 'quantity', 'margin']
+    const changed = metrics.some(row => {
+      const existing = data.profitRecords.find(record => record.storeId === storeId && record.date === row.date && record.productId === row.productId)
+      return !existing || fields.some(field => existing[field] !== (field === 'operationRate' ? row.rate : row[field as keyof ProfitMetric]))
+    })
+    if (!changed) return
+    const timer = window.setTimeout(() => update(current => {
+      const incoming = new Map(metrics.map(row => {
+        const id = `profit-${storeId}-${row.date}-${row.productId}`
+        const record: ProfitRecord = { id, storeId, productId: row.productId, date: row.date, amount: row.amount, cost: row.cost, grossProfit: row.grossProfit, promotion: row.promotion, operationRate: row.rate, operationFee: row.operationFee, estimatedProfit: row.estimatedProfit, quantity: row.quantity, margin: row.margin, updatedAt: new Date().toISOString() }
+        return [`${storeId}|${row.date}|${row.productId}`, record]
+      }))
+      return { ...current, profitRecords: [...current.profitRecords.filter(record => !incoming.has(`${record.storeId}|${record.date}|${record.productId}`)), ...incoming.values()] }
+    }), 600)
+    return () => window.clearTimeout(timer)
+  }, [data.profitRecords, metrics, orders.size, storeId, unmatched.length, update])
 
   const importTable = (name: string, table: unknown[][], next: Map<string, ProfitOrder>) => {
     const headerIndex = table.slice(0, 30).findIndex(row => { const headers = new Set(row.map(cleanText)); return headers.has('订单状态') && headers.has('商品数量(件)') && headers.has('商家实收金额(元)') && (headers.has('支付时间') || headers.has('订单成交时间')) })
@@ -156,7 +179,8 @@ export function ProfitPreview() {
     {messages.length > 0 && <div className="pdd-message ok"><FileSpreadsheet size={16} /><span>{messages.join('；')}</span></div>}
     {skuGroups.length > 0 && <section className="panel table-panel pdd-cost-panel"><div className="table-caption"><div><strong>SKU 成本匹配</strong><span>先按商家编码匹配；空编码或未匹配编码再按规格唯一匹配。仍未匹配时请手动选择。</span></div><div className="cost-count"><b>{skuGroups.length - unmatched.length}</b> 个已匹配 · <b>{unmatched.length}</b> 个待处理</div></div><div className="table-scroll"><table><thead><tr><th>报表 SKU</th><th>商品规格</th><th>销量</th><th>匹配方式</th><th>成本 SKU / 产品</th><th>单件成本</th></tr></thead><tbody>{skuGroups.map(group => { const match = group.match; return <tr key={group.key}><td><strong className="cell-main">{group.skuCode || '空编码'}</strong></td><td>{group.specification || '—'}</td><td>{group.quantity}</td><td>{match ? <span className="link-status status-日销">{match.source}匹配</span> : <span className="link-status status-已挂">待匹配</span>}</td><td>{match ? <><div className="cell-main">{match.cost.skuCode}</div><div className="cell-sub">{data.products.find(product => product.id === match.cost.productId)?.name} · {match.cost.specification}</div></> : <select value={manualMatches.get(group.key) || ''} onChange={event => setManualMatches(current => { const next = new Map(current); if (event.target.value) next.set(group.key, event.target.value); else next.delete(group.key); return next })}><option value="">请选择成本 SKU</option>{availableCosts.map(cost => <option key={cost.id} value={cost.id}>{data.products.find(product => product.id === cost.productId)?.name} · {cost.skuCode} · {cost.specification}</option>)}</select>}</td><td>{match ? money(match.cost.totalCost) : '—'}</td></tr> })}</tbody></table></div></section>}
     {unmatched.length > 0 && <div className="pdd-message error">还有 {unmatched.length} 个 SKU 未匹配成本，毛利结果暂不完整；完成匹配后即可导出。</div>}
-    {total && <><section className="pdd-metrics">{[['商家实收', money(total.amount)], ['商品成本', money(total.cost)], ['推广费', money(total.promotion)], ['运营费', money(total.operationFee)], ['毛利预估', money(total.estimatedProfit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section><section className="panel table-panel"><div className="table-caption"><div><strong>毛利预览表</strong><span>毛利预估＝实收金额－成本－推广费－运营费；推广费可按日期和产品填写。</span></div></div><div className="table-scroll"><table><thead><tr>{['日期','产品','实收金额','成本','毛利','推广费','运营费率','运营费','毛利预估','销量','毛利率'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody>{metrics.map(row => <tr key={`${row.date}|${row.productId}`}><td>{row.date}</td><td><strong className="cell-main">{row.product}</strong></td><td>{money(row.amount)}</td><td>{money(row.cost)}</td><td>{money(row.grossProfit)}</td><td><input className="cost-input promo-input" type="number" min="0" step="0.01" value={promotions.get(`${row.date}|${row.productId}`) ?? 0} onChange={event => setPromotions(current => { const next = new Map(current); next.set(`${row.date}|${row.productId}`, Number(event.target.value || 0)); return next })} /></td><td>{(row.rate * 100).toFixed(2).replace(/\.00$/, '')}%</td><td>{money(row.operationFee)}</td><td className={row.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(row.estimatedProfit)}</td><td>{row.quantity}</td><td>{(row.margin * 100).toFixed(2)}%</td></tr>)}</tbody></table></div></section></>}
+    {total && <><section className="pdd-metrics">{[['商家实收', money(total.amount)], ['商品成本', money(total.cost)], ['推广费', money(total.promotion)], ['运营费', money(total.operationFee)], ['毛利预估', money(total.estimatedProfit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section><section className="panel table-panel"><div className="table-caption"><div><strong>本次毛利预览</strong><span>毛利预估＝实收金额－成本－推广费－运营费；完成成本匹配后会自动保存每日汇总。</span></div><div className="cost-count">云端状态：<b>{syncStatus === 'saving' ? '保存中…' : syncStatus === 'error' ? '保存失败' : '已保存'}</b></div></div><div className="table-scroll"><table><thead><tr>{['日期','产品','实收金额','成本','毛利','推广费','运营费率','运营费','毛利预估','销量','毛利率'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody>{metrics.map(row => { const key = `${row.date}|${row.productId}`; return <tr key={key}><td>{row.date}</td><td><strong className="cell-main">{row.product}</strong></td><td>{money(row.amount)}</td><td>{money(row.cost)}</td><td>{money(row.grossProfit)}</td><td><input className="cost-input promo-input" type="number" min="0" step="0.01" value={promotions.has(key) ? promotions.get(key) : savedPromotions.get(key) ?? 0} onChange={event => setPromotions(current => { const next = new Map(current); next.set(key, Number(event.target.value || 0)); return next })} /></td><td>{(row.rate * 100).toFixed(2).replace(/\.00$/, '')}%</td><td>{money(row.operationFee)}</td><td className={row.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(row.estimatedProfit)}</td><td>{row.quantity}</td><td>{(row.margin * 100).toFixed(2)}%</td></tr> })}</tbody></table></div></section></>}
+    {savedTotal && <section className="panel table-panel saved-profit-panel"><div className="table-caption"><div><strong>已保存每日毛利</strong><span>仅保存每日汇总，不保存订单明细；相同店铺、日期和产品再次导入时自动覆盖。</span></div><div className="cost-count"><b>{savedRecords.length}</b> 条每日记录</div></div><div className="table-scroll"><table><thead><tr>{['日期','产品','实收金额','成本','推广费','运营费','毛利预估','销量','毛利率'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody><tr className="profit-total-row"><td><strong>累计汇总</strong></td><td>{savedRecords.length ? `${savedRecords[savedRecords.length - 1].date} 至 ${savedRecords[0].date}` : '—'}</td><td>{money(savedTotal.amount)}</td><td>{money(savedTotal.cost)}</td><td>{money(savedTotal.promotion)}</td><td>{money(savedTotal.operationFee)}</td><td className={savedTotal.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(savedTotal.estimatedProfit)}</td><td>{savedTotal.quantity}</td><td>{savedTotal.amount ? `${(savedTotal.estimatedProfit / savedTotal.amount * 100).toFixed(2)}%` : '0.00%'}</td></tr>{savedRecords.map(record => <tr key={record.id}><td>{record.date}</td><td><strong className="cell-main">{data.products.find(product => product.id === record.productId)?.name || '已删除产品'}</strong></td><td>{money(record.amount)}</td><td>{money(record.cost)}</td><td>{money(record.promotion)}</td><td>{money(record.operationFee)}</td><td className={record.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(record.estimatedProfit)}</td><td>{record.quantity}</td><td>{(record.margin * 100).toFixed(2)}%</td></tr>)}</tbody></table></div></section>}
     {!orders.size && <section className="panel pdd-empty"><BarChart3 size={28} /><strong>尚未导入订单</strong><span>选择店铺并上传订单报表后生成毛利预览。</span></section>}
   </div>
 }

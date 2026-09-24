@@ -33,7 +33,14 @@ export interface TodoItem {
   id: string; date: string; title: string; clientId: string; storeId: string
   completed: boolean; createdAt: string
 }
+export interface ProfitRecord {
+  id: string; storeId: string; productId: string; date: string
+  amount: number; cost: number; grossProfit: number; promotion: number
+  operationRate: number; operationFee: number; estimatedProfit: number
+  quantity: number; margin: number; updatedAt: string
+}
 export interface WorkbenchData {
   clients: Client[]; stores: Store[]; products: Product[]; productLinks: ProductLink[]
   skus: Sku[]; productCosts: ProductCost[]; operations: Operation[]; skuHistory: SkuHistory[]; todos: TodoItem[]
+  profitRecords: ProfitRecord[]
 }
