@@ -37,6 +37,8 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/automation/pdd/accounts.local.json
+/automation/pdd/.local/
 
 # operating system
 Thumbs.db

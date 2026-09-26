@@ -1,0 +1,9 @@
+{
+  "accounts": [
+    {
+      "id": "pdd-01",
+      "name": "示例店铺",
+      "enabled": true
+    }
+  ]
+}

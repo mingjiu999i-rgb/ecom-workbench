@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pdd:login": "node automation/pdd/login.mjs",
+    "pdd:download": "node automation/pdd/download-yesterday.mjs"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
@@ -23,6 +25,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "playwright-core": "^1.63.0",
     "tailwindcss": "^4.1.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.5"
