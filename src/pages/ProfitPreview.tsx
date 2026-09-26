@@ -2,8 +2,10 @@ import JSZip from 'jszip'
 import { BarChart3, Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from '@e965/xlsx'
+import * as XLSXStyle from 'xlsx-js-style'
 import { useWorkbench } from '../store/workbench'
 import type { ProductCost, ProfitRecord } from '../types/models'
+import { createProfitPreviewSheet } from '../utils/profitWorkbook'
 
 type Row = Record<string, string | number>
 type ProfitOrder = { key: string; orderId: string; date: string; skuCode: string; specification: string; productItemId: string; quantity: number; receipt: number; status: string }
@@ -110,6 +112,23 @@ export function ProfitPreview() {
   const unmatched = skuGroups.filter(group => !group.match)
   const total = useMemo(() => metrics.length ? metrics.reduce((sum, row) => ({ amount: sum.amount + row.amount, cost: sum.cost + row.cost, grossProfit: sum.grossProfit + row.grossProfit, promotion: sum.promotion + row.promotion, operationFee: sum.operationFee + row.operationFee, estimatedProfit: sum.estimatedProfit + row.estimatedProfit, quantity: sum.quantity + row.quantity }), { amount: 0, cost: 0, grossProfit: 0, promotion: 0, operationFee: 0, estimatedProfit: 0, quantity: 0 }) : null, [metrics])
   const savedTotal = useMemo(() => savedRecords.length ? savedRecords.reduce((sum, row) => ({ amount: sum.amount + row.amount, cost: sum.cost + row.cost, grossProfit: sum.grossProfit + row.grossProfit, promotion: sum.promotion + row.promotion, operationFee: sum.operationFee + row.operationFee, estimatedProfit: sum.estimatedProfit + row.estimatedProfit, quantity: sum.quantity + row.quantity }), { amount: 0, cost: 0, grossProfit: 0, promotion: 0, operationFee: 0, estimatedProfit: 0, quantity: 0 }) : null, [savedRecords])
+  const exportMetrics = useMemo(() => {
+    const rows = new Map(savedRecords.map(record => [`${record.date}|${record.productId}`, {
+      date: record.date,
+      productId: record.productId,
+      product: data.products.find(product => product.id === record.productId)?.name || '已删除产品',
+      amount: record.amount,
+      cost: record.cost,
+      grossProfit: record.grossProfit,
+      promotion: record.promotion,
+      operationFee: record.operationFee,
+      estimatedProfit: record.estimatedProfit,
+      quantity: record.quantity,
+      margin: record.margin,
+    }]))
+    if (!unmatched.length) metrics.forEach(row => rows.set(`${row.date}|${row.productId}`, row))
+    return [...rows.values()]
+  }, [data.products, metrics, savedRecords, unmatched.length])
 
   useEffect(() => {
     if (!storeId || !orders.size || !metrics.length || unmatched.length) return
@@ -163,16 +182,15 @@ export function ProfitPreview() {
   }
 
   const exportResult = () => {
-    if (!total || unmatched.length) return
-    const workbook = XLSX.utils.book_new()
-    const preview = metrics.map(row => ({ 日期: row.date, 店铺: store?.name || '', 产品: row.product, 实收金额: row.amount, 成本: row.cost, 毛利: row.grossProfit, 推广费: row.promotion, 运营费率: row.rate, 运营费: row.operationFee, 毛利预估: row.estimatedProfit, 销量: row.quantity, 毛利率: row.margin }))
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(preview), '毛利预览表')
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(skuGroups.map(group => ({ SKU编码: group.skuCode, 商品规格: group.specification, 销量: group.quantity, 实收金额: round(group.receipt), 匹配方式: group.match?.source || '未匹配', 成本SKU: group.match?.cost.skuCode || '', 单件成本: group.match?.cost.totalCost ?? '' }))), 'SKU匹配')
-    XLSX.writeFile(workbook, `${store?.name || '店铺'}_毛利预览_${new Date().toLocaleDateString('sv-SE').replaceAll('-', '')}.xlsx`)
+    if (!exportMetrics.length) return
+    const workbook = XLSXStyle.utils.book_new()
+    XLSXStyle.utils.book_append_sheet(workbook, createProfitPreviewSheet(exportMetrics), '毛利预览表')
+    if (skuGroups.length) XLSXStyle.utils.book_append_sheet(workbook, XLSXStyle.utils.json_to_sheet(skuGroups.map(group => ({ SKU编码: group.skuCode, 商品规格: group.specification, 销量: group.quantity, 实收金额: round(group.receipt), 匹配方式: group.match?.source || '未匹配', 成本SKU: group.match?.cost.skuCode || '', 单件成本: group.match?.cost.totalCost ?? '' }))), 'SKU匹配')
+    XLSXStyle.writeFile(workbook, `${store?.name || '店铺'}_毛利预览_${new Date().toLocaleDateString('sv-SE').replaceAll('-', '')}.xlsx`)
   }
 
   return <div className="page page-wide pdd-page">
-    <div className="page-heading"><div><span className="eyebrow">统一毛利计算</span><h1>毛利预览</h1><p>适用于余顺交、赵梦圆及后续店铺；统一使用工作台中的产品成本和运营费率。</p></div><div className="heading-actions"><button className="button secondary" onClick={clearResults}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!total || unmatched.length > 0} onClick={exportResult}><Download size={16} />导出毛利预览</button></div></div>
+    <div className="page-heading"><div><span className="eyebrow">统一毛利计算</span><h1>毛利预览</h1><p>适用于余顺交、赵梦圆及后续店铺；统一使用工作台中的产品成本和运营费率。</p></div><div className="heading-actions"><button className="button secondary" onClick={clearResults}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!exportMetrics.length} onClick={exportResult}><Download size={16} />导出毛利预览</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>报表仅在浏览器中计算</strong><span>订单明细不会上传或保存；产品成本和运营费率来自工作台基础资料。</span></div></section>
     <section className="panel pdd-import profit-import"><div><label className="field"><span>选择店铺</span><select value={storeId} onChange={event => { setStoreId(event.target.value); clearResults() }}><option value="">请选择店铺</option>{activeStores.map(item => <option key={item.id} value={item.id}>{data.clients.find(client => client.id === item.clientId)?.name} · {item.name}</option>)}</select></label><p>上传该店铺的订单 CSV、XLS、XLSX 或 ZIP；自动过滤退款、取消、待付款和未付款订单。</p></div><button className="button primary" disabled={busy || !storeId} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择订单报表'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
     {error && <div className="pdd-message error">{error}</div>}
