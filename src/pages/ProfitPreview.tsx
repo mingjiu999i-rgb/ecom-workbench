@@ -48,6 +48,7 @@ export function ProfitPreview() {
   const { data, update, syncStatus } = useWorkbench()
   const inputRef = useRef<HTMLInputElement>(null)
   const [storeId, setStoreId] = useState('')
+  const [exportClientId, setExportClientId] = useState('')
   const [orders, setOrders] = useState<Map<string, ProfitOrder>>(new Map())
   const [manualMatches, setManualMatches] = useState<Map<string, string>>(new Map())
   const [promotions, setPromotions] = useState<Map<string, number>>(new Map())
@@ -129,6 +130,23 @@ export function ProfitPreview() {
     if (!unmatched.length) metrics.forEach(row => rows.set(`${row.date}|${row.productId}`, row))
     return [...rows.values()]
   }, [data.products, metrics, savedRecords, unmatched.length])
+  const clientExportMetrics = useMemo(() => {
+    if (!exportClientId) return []
+    const clientStoreIds = new Set(data.stores.filter(item => item.clientId === exportClientId).map(item => item.id))
+    return data.profitRecords.filter(record => clientStoreIds.has(record.storeId)).map(record => ({
+      date: record.date,
+      productId: record.productId,
+      product: data.products.find(product => product.id === record.productId)?.name || '已删除产品',
+      amount: record.amount,
+      cost: record.cost,
+      grossProfit: record.grossProfit,
+      promotion: record.promotion,
+      operationFee: record.operationFee,
+      estimatedProfit: record.estimatedProfit,
+      quantity: record.quantity,
+      margin: record.margin,
+    }))
+  }, [data.products, data.profitRecords, data.stores, exportClientId])
 
   useEffect(() => {
     if (!storeId || !orders.size || !metrics.length || unmatched.length) return
@@ -181,17 +199,28 @@ export function ProfitPreview() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '订单报表解析失败') } finally { setBusy(false); if (inputRef.current) inputRef.current.value = '' }
   }
 
+  const writeProfitWorkbook = (rows: typeof exportMetrics, filename: string, includeSkuMatches = false) => {
+    const workbook = XLSXStyle.utils.book_new()
+    XLSXStyle.utils.book_append_sheet(workbook, createProfitPreviewSheet(rows), '毛利预览表')
+    if (includeSkuMatches && skuGroups.length) XLSXStyle.utils.book_append_sheet(workbook, XLSXStyle.utils.json_to_sheet(skuGroups.map(group => ({ SKU编码: group.skuCode, 商品规格: group.specification, 销量: group.quantity, 实收金额: round(group.receipt), 匹配方式: group.match?.source || '未匹配', 成本SKU: group.match?.cost.skuCode || '', 单件成本: group.match?.cost.totalCost ?? '' }))), 'SKU匹配')
+    XLSXStyle.writeFile(workbook, filename)
+  }
+
   const exportResult = () => {
     if (!exportMetrics.length) return
-    const workbook = XLSXStyle.utils.book_new()
-    XLSXStyle.utils.book_append_sheet(workbook, createProfitPreviewSheet(exportMetrics), '毛利预览表')
-    if (skuGroups.length) XLSXStyle.utils.book_append_sheet(workbook, XLSXStyle.utils.json_to_sheet(skuGroups.map(group => ({ SKU编码: group.skuCode, 商品规格: group.specification, 销量: group.quantity, 实收金额: round(group.receipt), 匹配方式: group.match?.source || '未匹配', 成本SKU: group.match?.cost.skuCode || '', 单件成本: group.match?.cost.totalCost ?? '' }))), 'SKU匹配')
-    XLSXStyle.writeFile(workbook, `${store?.name || '店铺'}_毛利预览_${new Date().toLocaleDateString('sv-SE').replaceAll('-', '')}.xlsx`)
+    writeProfitWorkbook(exportMetrics, `${store?.name || '店铺'}_毛利预览_${new Date().toLocaleDateString('sv-SE').replaceAll('-', '')}.xlsx`, true)
+  }
+
+  const exportClientResult = () => {
+    if (!clientExportMetrics.length) return
+    const clientName = data.clients.find(client => client.id === exportClientId)?.name || '甲方'
+    writeProfitWorkbook(clientExportMetrics, `${clientName}_全部店铺毛利汇总_${new Date().toLocaleDateString('sv-SE').replaceAll('-', '')}.xlsx`)
   }
 
   return <div className="page page-wide pdd-page">
     <div className="page-heading"><div><span className="eyebrow">统一毛利计算</span><h1>毛利预览</h1><p>适用于余顺交、赵梦圆及后续店铺；统一使用工作台中的产品成本和运营费率。</p></div><div className="heading-actions"><button className="button secondary" onClick={clearResults}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!exportMetrics.length} onClick={exportResult}><Download size={16} />导出毛利预览</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>报表仅在浏览器中计算</strong><span>订单明细不会上传或保存；产品成本和运营费率来自工作台基础资料。</span></div></section>
+    <section className="panel pdd-import profit-import"><div><label className="field"><span>按甲方汇总导出</span><select value={exportClientId} onChange={event => setExportClientId(event.target.value)}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><p>汇总该甲方名下所有店铺中相同日期、相同产品的已保存毛利数据。</p></div><button className="button primary" disabled={!clientExportMetrics.length} onClick={exportClientResult}><Download size={16} />导出甲方汇总</button></section>
     <section className="panel pdd-import profit-import"><div><label className="field"><span>选择店铺</span><select value={storeId} onChange={event => { setStoreId(event.target.value); clearResults() }}><option value="">请选择店铺</option>{activeStores.map(item => <option key={item.id} value={item.id}>{data.clients.find(client => client.id === item.clientId)?.name} · {item.name}</option>)}</select></label><p>上传该店铺的订单 CSV、XLS、XLSX 或 ZIP；自动过滤退款、取消、待付款和未付款订单。</p></div><button className="button primary" disabled={busy || !storeId} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择订单报表'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
     {error && <div className="pdd-message error">{error}</div>}
     {messages.length > 0 && <div className="pdd-message ok"><FileSpreadsheet size={16} /><span>{messages.join('；')}</span></div>}

@@ -49,11 +49,33 @@ function monthlyValue(rows: ProfitExportMetric[], key: MetricKey) {
   return rows.reduce((sum, row) => sum + row[key], 0)
 }
 
+export function aggregateProfitMetrics(metrics: ProfitExportMetric[]) {
+  const grouped = new Map<string, ProfitExportMetric>()
+  metrics.forEach(row => {
+    const key = `${row.date}|${row.productId}`
+    const current = grouped.get(key)
+    if (!current) {
+      grouped.set(key, { ...row })
+      return
+    }
+    current.amount += row.amount
+    current.cost += row.cost
+    current.grossProfit += row.grossProfit
+    current.promotion += row.promotion
+    current.operationFee += row.operationFee
+    current.estimatedProfit += row.estimatedProfit
+    current.quantity += row.quantity
+    current.margin = current.amount ? current.estimatedProfit / current.amount : 0
+  })
+  return [...grouped.values()]
+}
+
 export function createProfitPreviewSheet(metrics: ProfitExportMetric[]) {
-  const dates = [...new Set(metrics.map(row => row.date))].sort()
+  const combinedMetrics = aggregateProfitMetrics(metrics)
+  const dates = [...new Set(combinedMetrics.map(row => row.date))].sort()
   const months = [...new Set(dates.map(monthKey))]
   const years = new Set(months.map(month => month.slice(0, 4)))
-  const products = [...new Map(metrics.map(row => [row.productId, row.product])).entries()]
+  const products = [...new Map(combinedMetrics.map(row => [row.productId, row.product])).entries()]
     .sort((a, b) => a[1].localeCompare(b[1], 'zh-CN'))
   const columnCount = 2 + dates.length + months.length
   const rows: Array<Array<string | number>> = []
@@ -63,7 +85,7 @@ export function createProfitPreviewSheet(metrics: ProfitExportMetric[]) {
   products.forEach(([productId, product], productIndex) => {
     const start = rows.length
     blockStarts.push(start)
-    const productRows = metrics.filter(row => row.productId === productId)
+    const productRows = combinedMetrics.filter(row => row.productId === productId)
     const byDate = new Map(productRows.map(row => [row.date, row]))
     rows.push([
       product,
