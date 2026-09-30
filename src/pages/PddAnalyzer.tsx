@@ -6,7 +6,7 @@ import { useWorkbench } from '../store/workbench'
 
 type Row = Record<string, string | number>
 type Order = { id: string; shop: string; payTime: string; payDate: string; receipt: number; status: string; productId: string; specification: string; skuCode: string; quantity: number }
-type Refund = { id: string; orderId: string; shop: string; status: string; stage: string }
+type Refund = { id: string; orderId: string; shop: string; status: string; stage: string; refundAmount: number }
 type FundCategory = 'positive' | 'refund' | 'other' | 'transfer' | 'promotion' | 'unknown'
 type Fund = { key: string; orderId: string; shop: string; income: number; expense: number; category: FundCategory }
 type Promotion = { key: string; shop: string; date: string; amount: number }
@@ -92,7 +92,7 @@ export function PddAnalyzer() {
       return `订单 ${rows.length} 行`
     }
     if (headerSet.has('售后编号') && headerSet.has('订单编号')) {
-      setRefunds(current => { const next = new Map(current); rows.forEach(row => { const id = text(row['售后编号']); if (id) next.set(id, { id, orderId: text(row['订单编号']), shop: targetShop, status: text(row['售后状态']), stage: text(row['订单状态']) }) }); return next })
+      setRefunds(current => { const next = new Map(current); rows.forEach(row => { const id = text(row['售后编号']); if (id) next.set(id, { id, orderId: text(row['订单编号']), shop: targetShop, status: text(row['售后状态']), stage: text(row['订单状态']), refundAmount: amount(row['退款金额'] || row['退款金额(元)'] || row['退款金额（元）']) }) }); return next })
       return `退款 ${rows.length} 行`
     }
     if (headerSet.has('商户订单号') && headerSet.has('发生时间')) {
@@ -183,7 +183,7 @@ function calculateSummaries(orders: Order[], refunds: Refund[], funds: Fund[], p
     const dayFunds = funds.filter(f => ids.has(f.orderId)); const original = dayOrders.reduce((n, o) => n + o.receipt, 0); const unshippedOriginal = dayOrders.filter(o => unshipped.has(o.id)).reduce((n, o) => n + o.receipt, 0); const effective = original - unshippedOriginal
     const eligible = new Set(dayOrders.filter(o => !unshipped.has(o.id) && !o.status.includes('取消')).map(o => o.id)); const positive = new Set(dayFunds.filter(f => f.category === 'positive' && f.income > 0).map(f => f.orderId))
     const currentNet = dayFunds.filter(f => ['positive', 'refund', 'other'].includes(f.category)).reduce((n, f) => n + f.income + f.expense, 0)
-    const shippedRefund = -dayFunds.filter(f => f.category === 'refund' && shipped.has(f.orderId)).reduce((n, f) => n + f.income + f.expense, 0)
+    const shippedRefund = dayRefunds.filter(r => shipped.has(r.orderId)).reduce((n, r) => n + r.refundAmount, 0)
     const otherDeductions = -dayFunds.filter(f => f.category === 'other').reduce((n, f) => n + f.income + f.expense, 0)
     let productCost = 0; let missing = 0
     dayOrders.filter(o => !unshipped.has(o.id) && o.skuCode).forEach(o => { const cost = costs.get(`${shop}|${o.skuCode}`); if (cost == null) missing += 1; else productCost += cost * o.quantity })
