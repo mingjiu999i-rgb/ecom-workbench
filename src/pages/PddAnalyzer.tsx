@@ -8,9 +8,10 @@ type Row = Record<string, string | number>
 type Order = { id: string; shop: string; payTime: string; payDate: string; receipt: number; status: string; productId: string; specification: string; skuCode: string; quantity: number }
 type Refund = { id: string; orderId: string; shop: string; status: string; stage: string; refundAmount: number }
 type FundCategory = 'positive' | 'refund' | 'other' | 'transfer' | 'promotion' | 'unknown'
-type Fund = { key: string; orderId: string; shop: string; income: number; expense: number; category: FundCategory }
+type Fund = { key: string; orderId: string; shop: string; occurredAt: string; income: number; expense: number; accountType: string; businessCode: string; businessName: string; businessDescription: string; category: FundCategory }
 type Promotion = { key: string; shop: string; date: string; amount: number }
-type Summary = { shop: string; date: string; orderCount: number; originalSales: number; effectiveSales: number; shippedRefund: number; otherDeductions: number; productCost: number | null; promotionFee: number; estimatedProfit: number | null; currentNet: number; collectionGap: number; profit: number | null; eligibleOrders: number; settledOrders: number; completionRate: number; mature: boolean; missingCostOrders: number; unknownFunds: number }
+type Summary = { shop: string; date: string; orderCount: number; originalSales: number; effectiveSales: number; shippedRefund: number; platformDeductions: number; platformReimbursements: number; productCost: number | null; promotionFee: number; estimatedProfit: number | null; currentNet: number; collectionGap: number; profit: number | null; eligibleOrders: number; settledOrders: number; completionRate: number; mature: boolean; missingCostOrders: number; unknownFunds: number }
+type DeductionBreakdown = { key: string; businessCode: string; businessName: string; accountType: string; deductionCount: number; deduction: number; reimbursementCount: number; reimbursement: number; netDeduction: number }
 
 const money = (value: number | null) => value == null ? '待补成本' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const text = (value: unknown) => value == null ? '' : String(value).replace(/\t/g, '').trim()
@@ -37,6 +38,27 @@ function classifyFund(accountType: string, business: string): FundCategory {
   if (['推广消耗', '广告消耗', '推广实际扣费', '广告实际扣费', '推广费扣款', '广告费扣款'].some(word => combined.includes(word))) return 'promotion'
   if (['技术服务费', '售后费用', '消费者体验提升计划', '多多进宝', '小额打款', '申诉补回', '费用返还', '其他收入'].some(word => combined.includes(word)) || /^(003|004|006|013)/.test(code)) return 'other'
   return 'unknown'
+}
+
+function parseBusiness(business: string, accountType: string) {
+  const split = business.indexOf('|')
+  const businessCode = (split >= 0 ? business.slice(0, split) : '').trim()
+  const fullName = (split >= 0 ? business.slice(split + 1) : business).trim()
+  const businessName = (fullName.includes('-') ? fullName.slice(fullName.indexOf('-') + 1) : fullName) || accountType || '未识别业务'
+  return { businessCode, businessName }
+}
+
+function summarizeDeductions(funds: Fund[]): DeductionBreakdown[] {
+  const grouped = new Map<string, DeductionBreakdown>()
+  funds.filter(fund => fund.category === 'other' && (fund.income !== 0 || fund.expense !== 0)).forEach(fund => {
+    const key = `${fund.businessCode}|${fund.businessName}|${fund.accountType}`
+    const current = grouped.get(key) || { key, businessCode: fund.businessCode, businessName: fund.businessName, accountType: fund.accountType, deductionCount: 0, deduction: 0, reimbursementCount: 0, reimbursement: 0, netDeduction: 0 }
+    if (fund.expense < 0) { current.deductionCount += 1; current.deduction += Math.abs(fund.expense) }
+    if (fund.income > 0) { current.reimbursementCount += 1; current.reimbursement += fund.income }
+    current.deduction = round(current.deduction); current.reimbursement = round(current.reimbursement); current.netDeduction = round(current.deduction - current.reimbursement)
+    grouped.set(key, current)
+  })
+  return [...grouped.values()].sort((a, b) => b.deduction - a.deduction || b.reimbursement - a.reimbursement || a.businessCode.localeCompare(b.businessCode))
 }
 
 function parseTable(data: ArrayBuffer, name: string): unknown[][] {
@@ -96,7 +118,7 @@ export function PddAnalyzer() {
       return `退款 ${rows.length} 行`
     }
     if (headerSet.has('商户订单号') && headerSet.has('发生时间')) {
-      setFunds(current => { const next = new Map(current); const ordinals = new Map<string, number>(); rows.forEach(row => { const orderId = text(row['商户订单号']); if (!/^\d{6}-\d+$/.test(orderId)) return; const sig = signature(['商户订单号', '发生时间', '收入金额（+元）', '支出金额（-元）', '账务类型', '备注', '业务描述'].map(field => row[field])); const ordinal = (ordinals.get(sig) || 0) + 1; ordinals.set(sig, ordinal); const key = `${sig}:${ordinal}`; next.set(key, { key, orderId, shop: targetShop, income: amount(row['收入金额（+元）']), expense: amount(row['支出金额（-元）']), category: classifyFund(text(row['账务类型']), text(row['业务描述'])) }) }); return next })
+      setFunds(current => { const next = new Map(current); const ordinals = new Map<string, number>(); rows.forEach(row => { const orderId = text(row['商户订单号']); if (!/^\d{6}-\d+$/.test(orderId)) return; const accountType = text(row['账务类型']); const businessDescription = text(row['业务描述']); const business = parseBusiness(businessDescription, accountType); const sig = signature(['商户订单号', '发生时间', '收入金额（+元）', '支出金额（-元）', '账务类型', '备注', '业务描述'].map(field => row[field])); const ordinal = (ordinals.get(sig) || 0) + 1; ordinals.set(sig, ordinal); const key = `${sig}:${ordinal}`; next.set(key, { key, orderId, shop: targetShop, occurredAt: text(row['发生时间']), income: amount(row['收入金额（+元）']), expense: amount(row['支出金额（-元）']), accountType, businessCode: business.businessCode, businessName: business.businessName, businessDescription, category: classifyFund(accountType, businessDescription) }) }); return next })
       return `资金 ${rows.length} 行`
     }
     const promotion = promotionColumns(headerSet)
@@ -148,15 +170,20 @@ export function PddAnalyzer() {
   }, [orders])
   const summaries = useMemo(() => calculateSummaries([...orders.values()], [...refunds.values()], [...funds.values()], [...promotions.values()], resolvedCosts), [orders, refunds, funds, promotions, resolvedCosts])
   const total = useMemo(() => combine(summaries), [summaries])
+  const deductionBreakdown = useMemo(() => summarizeDeductions([...funds.values()]), [funds])
+  const deductionTotals = useMemo(() => deductionBreakdown.reduce((sum, row) => ({ deduction: round(sum.deduction + row.deduction), reimbursement: round(sum.reimbursement + row.reimbursement), netDeduction: round(sum.netDeduction + row.netDeduction) }), { deduction: 0, reimbursement: 0, netDeduction: 0 }), [deductionBreakdown])
   const clear = () => { setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCosts(new Map()); setMessages([]); setError('') }
   const exportResult = () => {
     if (!total) return
-    const summaryRows = [total, ...summaries].map(s => ({ 店铺名称: s.shop, 成交日期: s.date, 订单数: s.orderCount, 订单成交额: s.originalSales, 有效订单销售额: s.effectiveSales, 已发货退款: s.shippedRefund, 其他扣款: s.otherDeductions, 商品成本: s.productCost, 推广费: s.promotionFee, 预估盈亏: s.estimatedProfit, 订单净回款: s.currentNet, 回款差额: s.collectionGap, 当前盈亏: s.profit, 入账完成率: s.completionRate, 入账状态: s.mature ? '入账已完成' : '入账未完成' }))
+    const summaryRows = [total, ...summaries].map(s => ({ 店铺名称: s.shop, 成交日期: s.date, 订单数: s.orderCount, 订单成交额: s.originalSales, 有效订单销售额: s.effectiveSales, 已发货退款: s.shippedRefund, 平台扣款: s.platformDeductions, 平台补回: s.platformReimbursements, 商品成本: s.productCost, 推广费: s.promotionFee, 预估盈亏: s.estimatedProfit, 订单净回款: s.currentNet, 回款差额: s.collectionGap, 当前盈亏: s.profit, 入账完成率: s.completionRate, 入账状态: s.mature ? '入账已完成' : '入账未完成' }))
+    const deductionRows = deductionBreakdown.map(row => ({ 业务代码: row.businessCode, 扣款分类: row.businessName, 账务类型: row.accountType, 扣款笔数: row.deductionCount, 扣款金额: row.deduction, 补回笔数: row.reimbursementCount, 补回金额: row.reimbursement, 净扣款: row.netDeduction }))
+    const fundRows = [...funds.values()].map(row => ({ 店铺名称: row.shop, 商户订单号: row.orderId, 发生时间: row.occurredAt, 收入金额: row.income, 支出金额: row.expense, 账务类型: row.accountType, 业务代码: row.businessCode, 扣款分类: row.businessName, 原始业务描述: row.businessDescription, 系统分类: row.category }))
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), '经营汇总')
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(deductionRows), '扣款分类')
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([...orders.values()]), '订单明细')
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([...refunds.values()]), '退款明细')
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([...funds.values()]), '资金明细')
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(fundRows), '资金明细')
     XLSX.writeFile(workbook, `${shop || '店铺'}_订单经营分析_${new Date().toLocaleDateString('sv-SE').replaceAll('-', '')}.xlsx`)
   }
 
@@ -166,9 +193,10 @@ export function PddAnalyzer() {
     <section className="panel pdd-import"><div><label className="field"><span>本批表头店铺名称</span><input value={shop} onChange={event => setShop(event.target.value)} placeholder="例如：果老二生鲜" /></label><p>一次选择同一店铺的订单、退款、资金和推广费文件；支持 CSV、XLS、XLSX、ZIP。</p></div><button className="button primary" disabled={busy} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
     {error && <div className="pdd-message error">{error}</div>}
     {messages.length > 0 && <div className="pdd-message ok"><FileSpreadsheet size={16} /><span>{messages.join('；')}</span></div>}
+    {deductionBreakdown.length > 0 && <section className="panel table-panel pdd-deduction-panel"><div className="table-caption"><div><strong>扣款明细（按业务分类）</strong><span>按资金原表全量业务代码分别汇总；扣款与补回独立展示，不相互抵消。</span></div><div className="cost-count">扣款 <b>{money(deductionTotals.deduction)}</b> · 补回 <b>{money(deductionTotals.reimbursement)}</b> · 净扣款 <b>{money(deductionTotals.netDeduction)}</b></div></div><div className="table-scroll"><table><thead><tr>{['业务代码','扣款分类','账务类型','扣款笔数','扣款金额','补回笔数','补回金额','净扣款'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody><tr className="profit-total-row"><td colSpan={3}><strong>全部分类合计</strong></td><td>{deductionBreakdown.reduce((sum, row) => sum + row.deductionCount, 0)}</td><td>{money(deductionTotals.deduction)}</td><td>{deductionBreakdown.reduce((sum, row) => sum + row.reimbursementCount, 0)}</td><td>{money(deductionTotals.reimbursement)}</td><td className={deductionTotals.netDeduction < 0 ? 'positive' : 'negative'}>{money(deductionTotals.netDeduction)}</td></tr>{deductionBreakdown.map(row => <tr key={row.key}><td><strong className="cell-main">{row.businessCode || '未识别'}</strong></td><td>{row.businessName}</td><td>{row.accountType || '—'}</td><td>{row.deductionCount}</td><td>{money(row.deduction)}</td><td>{row.reimbursementCount}</td><td>{money(row.reimbursement)}</td><td className={row.netDeduction < 0 ? 'positive' : 'negative'}>{money(row.netDeduction)}</td></tr>)}</tbody></table></div></section>}
     {skuRows.length > 0 && <section className="panel table-panel pdd-cost-panel"><div className="table-caption"><div><strong>SKU 成本匹配</strong><span>优先自动匹配产品成本库；未匹配项可手动填写本次成本。匹配字段：商家编码-规格维度＝SKU 编码。</span></div><div className="cost-count"><b>{skuRows.filter(row => libraryCosts.has(row.code)).length}</b> 个自动匹配 · <b>{skuRows.filter(row => !libraryCosts.has(row.code) && manualCosts.has(`${shop.trim()}|${row.code}`)).length}</b> 个手动填写 · <b>{skuRows.filter(row => !libraryCosts.has(row.code) && !manualCosts.has(`${shop.trim()}|${row.code}`)).length}</b> 个待填写</div></div><div className="table-scroll"><table><thead><tr><th>SKU 编码</th><th>报表商品/规格</th><th>售出数量</th><th>成本来源</th><th>单件总成本</th></tr></thead><tbody>{skuRows.map(row => { const automatic = libraryCosts.get(row.code); const manualKey = `${shop.trim()}|${row.code}`; return <tr key={row.code}><td><strong className="cell-main">{row.code}</strong></td><td><div className="cell-main">{automatic?.product || row.productId || '未填写商品ID'}</div><div className="cell-sub">{automatic?.specification || row.specification || '未填写规格'}</div></td><td>{row.quantity}</td><td>{automatic ? <span className="link-status status-日销">成本库自动匹配</span> : <span className="link-status status-备用">手动填写</span>}</td><td>{automatic ? <strong className="positive">{money(automatic.cost)}</strong> : <input className="cost-input" type="number" min="0" step="0.01" placeholder="填写单件总成本" value={manualCosts.get(manualKey) ?? ''} onChange={event => setManualCosts(current => { const next = new Map(current); if (event.target.value === '') next.delete(manualKey); else next.set(manualKey, Number(event.target.value)); return next })} />}</td></tr> })}</tbody></table></div></section>}
     {total ? <><section className="pdd-metrics">{[['有效订单销售额', money(total.effectiveSales)], ['订单净回款', money(total.currentNet)], ['回款差额', money(total.collectionGap)], ['推广费', money(total.promotionFee)], ['当前盈亏', money(total.profit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section>
-      <section className="panel table-panel"><div className="table-caption"><div><strong>每日经营主表</strong><span>有效订单销售额＝订单成交额－未发货退款原金额－已发货退款金额；回款差额＝有效订单销售额－订单净回款。</span></div></div><div className="table-scroll"><table><thead><tr>{['成交日期','订单数','订单成交额','有效订单销售额','已发货退款','其他扣款','商品成本','推广费','预估盈亏','订单净回款','回款差额','当前盈亏','入账状态'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{[total, ...summaries].map((s, index) => <tr key={`${s.date}-${index}`}><td className="cell-main">{index === 0 ? `累计：${s.date}` : s.date}</td><td>{s.orderCount}</td><td>{money(s.originalSales)}</td><td>{money(s.effectiveSales)}</td><td>{money(s.shippedRefund)}</td><td>{money(s.otherDeductions)}</td><td>{money(s.productCost)}</td><td>{money(s.promotionFee)}</td><td>{money(s.estimatedProfit)}</td><td>{money(s.currentNet)}</td><td>{money(s.collectionGap)}</td><td className={s.profit != null && s.profit < 0 ? 'negative' : 'positive'}>{money(s.profit)}</td><td><span className={`status ${s.mature ? 'normal' : 'risk'}`}><i />{s.mature ? '已完成' : '未完成'}</span></td></tr>)}</tbody></table></div></section>
+      <section className="panel table-panel"><div className="table-caption"><div><strong>每日经营主表</strong><span>平台扣款与平台补回分列展示；二者已包含在订单净回款中，不会重复扣减。</span></div></div><div className="table-scroll"><table><thead><tr>{['成交日期','订单数','订单成交额','有效订单销售额','已发货退款','平台扣款','平台补回','商品成本','推广费','预估盈亏','订单净回款','回款差额','当前盈亏','入账状态'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{[total, ...summaries].map((s, index) => <tr key={`${s.date}-${index}`}><td className="cell-main">{index === 0 ? `累计：${s.date}` : s.date}</td><td>{s.orderCount}</td><td>{money(s.originalSales)}</td><td>{money(s.effectiveSales)}</td><td>{money(s.shippedRefund)}</td><td>{money(s.platformDeductions)}</td><td>{money(s.platformReimbursements)}</td><td>{money(s.productCost)}</td><td>{money(s.promotionFee)}</td><td>{money(s.estimatedProfit)}</td><td>{money(s.currentNet)}</td><td>{money(s.collectionGap)}</td><td className={s.profit != null && s.profit < 0 ? 'negative' : 'positive'}>{money(s.profit)}</td><td><span className={`status ${s.mature ? 'normal' : 'risk'}`}><i />{s.mature ? '已完成' : '未完成'}</span></td></tr>)}</tbody></table></div></section>
     </> : <section className="panel pdd-empty"><FileSpreadsheet size={28} /><strong>尚未导入报表</strong><span>填写店铺名称后，一次选择该店铺的全部报表。</span></section>}
   </div>
 }
@@ -184,11 +212,12 @@ function calculateSummaries(orders: Order[], refunds: Refund[], funds: Fund[], p
     const shippedRefund = dayRefunds.filter(r => shipped.has(r.orderId)).reduce((n, r) => n + r.refundAmount, 0); const effective = original - unshippedOriginal - shippedRefund
     const eligible = new Set(dayOrders.filter(o => !unshipped.has(o.id) && !o.status.includes('取消')).map(o => o.id)); const positive = new Set(dayFunds.filter(f => f.category === 'positive' && f.income > 0).map(f => f.orderId))
     const currentNet = dayFunds.filter(f => ['positive', 'refund', 'other'].includes(f.category)).reduce((n, f) => n + f.income + f.expense, 0)
-    const otherDeductions = -dayFunds.filter(f => f.category === 'other').reduce((n, f) => n + f.income + f.expense, 0)
+    const platformDeductions = dayFunds.filter(f => f.category === 'other' && f.expense < 0).reduce((n, f) => n + Math.abs(f.expense), 0)
+    const platformReimbursements = dayFunds.filter(f => f.category === 'other' && f.income > 0).reduce((n, f) => n + f.income, 0)
     let productCost = 0; let missing = 0
     dayOrders.filter(o => !unshipped.has(o.id) && o.skuCode).forEach(o => { const cost = costs.get(`${shop}|${o.skuCode}`); if (cost == null) missing += 1; else productCost += cost * o.quantity })
     const promotionFee = promotions.filter(p => p.shop === shop && p.date === date).reduce((n, p) => n + p.amount, 0); const settled = [...eligible].filter(id => positive.has(id)).length
-    return { shop, date, orderCount: dayOrders.length, originalSales: round(original), effectiveSales: round(effective), shippedRefund: round(shippedRefund), otherDeductions: round(otherDeductions), productCost: missing ? null : round(productCost), promotionFee: round(promotionFee), estimatedProfit: missing ? null : round(effective - productCost - promotionFee), currentNet: round(currentNet), collectionGap: round(effective - currentNet), profit: missing ? null : round(currentNet - productCost - promotionFee), eligibleOrders: eligible.size, settledOrders: settled, completionRate: eligible.size ? settled / eligible.size : 1, mature: settled === eligible.size, missingCostOrders: missing, unknownFunds: dayFunds.filter(f => f.category === 'unknown').length }
+    return { shop, date, orderCount: dayOrders.length, originalSales: round(original), effectiveSales: round(effective), shippedRefund: round(shippedRefund), platformDeductions: round(platformDeductions), platformReimbursements: round(platformReimbursements), productCost: missing ? null : round(productCost), promotionFee: round(promotionFee), estimatedProfit: missing ? null : round(effective - productCost - promotionFee), currentNet: round(currentNet), collectionGap: round(effective - currentNet), profit: missing ? null : round(currentNet - productCost - promotionFee), eligibleOrders: eligible.size, settledOrders: settled, completionRate: eligible.size ? settled / eligible.size : 1, mature: settled === eligible.size, missingCostOrders: missing, unknownFunds: dayFunds.filter(f => f.category === 'unknown').length }
   })
 }
 
@@ -197,5 +226,5 @@ function combine(days: Summary[]): Summary | null {
   const sum = (field: keyof Summary) => round(days.reduce((n, d) => n + Number(d[field] || 0), 0)); const missing = days.reduce((n, d) => n + d.missingCostOrders, 0); const orderCount = sum('orderCount'); const eligibleOrders = sum('eligibleOrders'); const settledOrders = sum('settledOrders')
   const productCost = missing ? null : sum('productCost'); const promotionFee = sum('promotionFee'); const effective = sum('effectiveSales'); const currentNet = sum('currentNet')
   const dates = days.map(d => d.date).sort()
-  return { shop: days[0].shop, date: `${dates[0]} 至 ${dates[dates.length - 1]}`, orderCount, originalSales: sum('originalSales'), effectiveSales: effective, shippedRefund: sum('shippedRefund'), otherDeductions: sum('otherDeductions'), productCost, promotionFee, estimatedProfit: productCost == null ? null : round(effective - productCost - promotionFee), currentNet, collectionGap: round(effective - currentNet), profit: productCost == null ? null : round(currentNet - productCost - promotionFee), eligibleOrders, settledOrders, completionRate: eligibleOrders ? settledOrders / eligibleOrders : 1, mature: days.every(d => d.mature), missingCostOrders: missing, unknownFunds: sum('unknownFunds') }
+  return { shop: days[0].shop, date: `${dates[0]} 至 ${dates[dates.length - 1]}`, orderCount, originalSales: sum('originalSales'), effectiveSales: effective, shippedRefund: sum('shippedRefund'), platformDeductions: sum('platformDeductions'), platformReimbursements: sum('platformReimbursements'), productCost, promotionFee, estimatedProfit: productCost == null ? null : round(effective - productCost - promotionFee), currentNet, collectionGap: round(effective - currentNet), profit: productCost == null ? null : round(currentNet - productCost - promotionFee), eligibleOrders, settledOrders, completionRate: eligibleOrders ? settledOrders / eligibleOrders : 1, mature: days.every(d => d.mature), missingCostOrders: missing, unknownFunds: sum('unknownFunds') }
 }
