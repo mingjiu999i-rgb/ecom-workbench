@@ -39,8 +39,17 @@ export interface ProfitRecord {
   operationRate: number; operationFee: number; estimatedProfit: number
   quantity: number; margin: number; updatedAt: string
 }
+export interface CollectionRecord {
+  id: string; storeId: string; date: string; orderCount: number
+  originalSales: number; effectiveSales: number; shippedRefund: number; couponRefund: number
+  basicServiceFee: number; afterSaleCompensation: number; smallPayment: number; appealReimbursement: number
+  productCost: number | null; promotionFee: number; estimatedProfit: number | null
+  currentNet: number; unsettledAmount: number; profit: number | null
+  eligibleOrders: number; settledOrders: number; completionRate: number; mature: boolean
+  missingCostOrders: number; unknownFunds: number; updatedAt: string
+}
 export interface WorkbenchData {
   clients: Client[]; stores: Store[]; products: Product[]; productLinks: ProductLink[]
   skus: Sku[]; productCosts: ProductCost[]; operations: Operation[]; skuHistory: SkuHistory[]; todos: TodoItem[]
-  profitRecords: ProfitRecord[]
+  profitRecords: ProfitRecord[]; collectionRecords: CollectionRecord[]
 }

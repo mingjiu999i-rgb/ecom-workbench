@@ -37,4 +37,5 @@ export const initialData: WorkbenchData = {
   skuHistory: [],
   todos: [],
   profitRecords: [],
+  collectionRecords: [],
 }
