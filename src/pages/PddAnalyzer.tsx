@@ -1,5 +1,5 @@
 import JSZip from 'jszip'
-import { Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
+import { ChevronDown, ChevronRight, Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from '@e965/xlsx'
 import { useWorkbench } from '../store/workbench'
@@ -100,6 +100,7 @@ export function PddAnalyzer() {
   const [messages, setMessages] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set())
   const store = data.stores.find(item => item.id === storeId)
   const shop = store?.name || ''
   const activeStores = data.stores.filter(item => item.storeStatus !== '暂停')
@@ -183,6 +184,17 @@ export function PddAnalyzer() {
   const filteredRecords = useMemo(() => savedRecords.filter(record => (!startDate || record.date >= startDate) && (!endDate || record.date <= endDate)), [savedRecords, startDate, endDate])
   const savedSummaries = useMemo(() => filteredRecords.map(record => ({ shop, date: record.date, orderCount: record.orderCount, originalSales: record.originalSales, effectiveSales: record.effectiveSales, shippedRefund: record.shippedRefund, couponRefund: record.couponRefund, basicServiceFee: record.basicServiceFee, afterSaleCompensation: record.afterSaleCompensation, smallPayment: record.smallPayment, appealReimbursement: record.appealReimbursement, productCost: record.productCost, promotionFee: record.promotionFee, estimatedProfit: record.estimatedProfit, currentNet: record.currentNet, unsettledAmount: record.unsettledAmount, profit: record.profit, eligibleOrders: record.eligibleOrders, settledOrders: record.settledOrders, completionRate: record.completionRate, mature: record.mature, missingCostOrders: record.missingCostOrders, unknownFunds: record.unknownFunds })), [filteredRecords, shop])
   const savedTotal = useMemo(() => combine(savedSummaries), [savedSummaries])
+  const savedMonthGroups = useMemo(() => {
+    const groups = new Map<string, Summary[]>()
+    savedSummaries.forEach(row => {
+      const month = row.date.slice(0, 7)
+      const rows = groups.get(month) || []
+      rows.push(row)
+      groups.set(month, rows)
+    })
+    return [...groups.entries()].map(([month, rows]) => ({ month, rows, total: combine(rows) }))
+  }, [savedSummaries])
+  const savedMonthSignature = savedMonthGroups.map(group => group.month).join('|')
   const deductionBreakdown = useMemo(() => summarizeDeductions([...funds.values()]), [funds])
   const deductionTotals = useMemo(() => deductionBreakdown.reduce((sum, row) => ({ deduction: round(sum.deduction + row.deduction), reimbursement: round(sum.reimbursement + row.reimbursement), netDeduction: round(sum.netDeduction + row.netDeduction) }), { deduction: 0, reimbursement: 0, netDeduction: 0 }), [deductionBreakdown])
 
@@ -202,6 +214,10 @@ export function PddAnalyzer() {
     }), 600)
     return () => window.clearTimeout(timer)
   }, [busy, data.collectionRecords, funds.size, orders.size, storeId, summaries, update])
+
+  useEffect(() => {
+    setExpandedMonths(savedMonthGroups[0] ? new Set([savedMonthGroups[0].month]) : new Set())
+  }, [storeId, savedMonthSignature])
 
   const clear = () => { setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCosts(new Map()); setMessages([]); setError('') }
   const exportResult = () => {
@@ -225,7 +241,30 @@ export function PddAnalyzer() {
     {total ? <><section className="pdd-metrics">{[['有效订单销售额', money(total.effectiveSales)], ['订单净回款', money(total.currentNet)], ['未回款金额', money(total.unsettledAmount)], ['推广费', money(total.promotionFee)], ['当前盈亏', money(total.profit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section>
       <section className="panel table-panel"><div className="table-caption"><div><strong>每日经营主表</strong><span>订单成交额已排除未发货退款和已取消订单；基础技术服务费只统计扣除部分。</span></div></div><div className="table-scroll"><table><thead><tr>{['成交日期','订单数','订单成交额','已发货退款','优惠券退款','有效订单销售额','基础技术服务费','售后补偿消费者','小额打款','申诉补回','商品成本','推广费','预估盈亏','订单净回款','未回款金额','当前盈亏','入账状态'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{[total, ...summaries].map((s, index) => <tr key={`${s.date}-${index}`}><td className="cell-main">{index === 0 ? `累计：${s.date}` : s.date}</td><td>{s.orderCount}</td><td>{money(s.originalSales)}</td><td>{money(s.shippedRefund)}</td><td>{money(s.couponRefund)}</td><td>{money(s.effectiveSales)}</td><td>{money(s.basicServiceFee)}</td><td>{money(s.afterSaleCompensation)}</td><td>{money(s.smallPayment)}</td><td>{money(s.appealReimbursement)}</td><td>{money(s.productCost)}</td><td>{money(s.promotionFee)}</td><td>{money(s.estimatedProfit)}</td><td>{money(s.currentNet)}</td><td>{money(s.unsettledAmount)}</td><td className={s.profit != null && s.profit < 0 ? 'negative' : 'positive'}>{money(s.profit)}</td><td><span className={`status ${s.mature ? 'normal' : 'risk'}`}><i />{s.mature ? '已完成' : '未完成'}</span></td></tr>)}</tbody></table></div></section>
     </> : <section className="panel pdd-empty"><FileSpreadsheet size={28} /><strong>尚未导入报表</strong><span>选择店铺后，一次选择该店铺的全部报表。</span></section>}
-    {savedTotal && <section className="panel table-panel saved-profit-panel"><div className="table-caption"><div><strong>云端每日订单回款</strong><span>仅保存每日计算汇总；当前日期筛选会同步应用到导出结果。</span></div><div className="cost-count">云端状态：<b>{syncStatus === 'saving' ? '保存中…' : syncStatus === 'error' ? '保存失败' : '已保存'}</b> · <b>{filteredRecords.length}</b> 条记录</div></div><div className="table-scroll"><table><thead><tr>{['成交日期','订单数','订单成交额','已发货退款','优惠券退款','有效订单销售额','基础技术服务费','售后补偿消费者','小额打款','申诉补回','商品成本','推广费','预估盈亏','订单净回款','未回款金额','当前盈亏','入账状态'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody><tr className="profit-total-row"><td><strong>筛选汇总：{savedTotal.date}</strong></td><td>{savedTotal.orderCount}</td><td>{money(savedTotal.originalSales)}</td><td>{money(savedTotal.shippedRefund)}</td><td>{money(savedTotal.couponRefund)}</td><td>{money(savedTotal.effectiveSales)}</td><td>{money(savedTotal.basicServiceFee)}</td><td>{money(savedTotal.afterSaleCompensation)}</td><td>{money(savedTotal.smallPayment)}</td><td>{money(savedTotal.appealReimbursement)}</td><td>{money(savedTotal.productCost)}</td><td>{money(savedTotal.promotionFee)}</td><td>{money(savedTotal.estimatedProfit)}</td><td>{money(savedTotal.currentNet)}</td><td>{money(savedTotal.unsettledAmount)}</td><td className={savedTotal.profit != null && savedTotal.profit < 0 ? 'negative' : 'positive'}>{money(savedTotal.profit)}</td><td><span className={`status ${savedTotal.mature ? 'normal' : 'risk'}`}><i />{savedTotal.mature ? '已完成' : '未完成'}</span></td></tr>{savedSummaries.map(row => <tr key={row.date}><td className="cell-main">{row.date}</td><td>{row.orderCount}</td><td>{money(row.originalSales)}</td><td>{money(row.shippedRefund)}</td><td>{money(row.couponRefund)}</td><td>{money(row.effectiveSales)}</td><td>{money(row.basicServiceFee)}</td><td>{money(row.afterSaleCompensation)}</td><td>{money(row.smallPayment)}</td><td>{money(row.appealReimbursement)}</td><td>{money(row.productCost)}</td><td>{money(row.promotionFee)}</td><td>{money(row.estimatedProfit)}</td><td>{money(row.currentNet)}</td><td>{money(row.unsettledAmount)}</td><td className={row.profit != null && row.profit < 0 ? 'negative' : 'positive'}>{money(row.profit)}</td><td><span className={`status ${row.mature ? 'normal' : 'risk'}`}><i />{row.mature ? '已完成' : '未完成'}</span></td></tr>)}</tbody></table></div></section>}
+    {savedTotal && <section className="panel table-panel saved-profit-panel">
+      <div className="table-caption"><div><strong>云端每日订单回款</strong><span>仅保存每日计算汇总；当前日期筛选会同步应用到导出结果。</span></div><div className="cost-count">云端状态：<b>{syncStatus === 'saving' ? '保存中…' : syncStatus === 'error' ? '保存失败' : '已保存'}</b> · <b>{filteredRecords.length}</b> 条记录</div></div>
+      <div className="table-scroll"><table>
+        <thead><tr>{['成交日期','订单数','订单成交额','已发货退款','优惠券退款','有效订单销售额','基础技术服务费','售后补偿消费者','小额打款','申诉补回','商品成本','推广费','预估盈亏','订单净回款','未回款金额','当前盈亏','入账状态'].map(header => <th key={header}>{header}</th>)}</tr></thead>
+        <tbody><tr className="profit-total-row"><td><strong>筛选汇总：{savedTotal.date}</strong></td><td>{savedTotal.orderCount}</td><td>{money(savedTotal.originalSales)}</td><td>{money(savedTotal.shippedRefund)}</td><td>{money(savedTotal.couponRefund)}</td><td>{money(savedTotal.effectiveSales)}</td><td>{money(savedTotal.basicServiceFee)}</td><td>{money(savedTotal.afterSaleCompensation)}</td><td>{money(savedTotal.smallPayment)}</td><td>{money(savedTotal.appealReimbursement)}</td><td>{money(savedTotal.productCost)}</td><td>{money(savedTotal.promotionFee)}</td><td>{money(savedTotal.estimatedProfit)}</td><td>{money(savedTotal.currentNet)}</td><td>{money(savedTotal.unsettledAmount)}</td><td className={savedTotal.profit != null && savedTotal.profit < 0 ? 'negative' : 'positive'}>{money(savedTotal.profit)}</td><td><span className={`status ${savedTotal.mature ? 'normal' : 'risk'}`}><i />{savedTotal.mature ? '已完成' : '未完成'}</span></td></tr></tbody>
+        {savedMonthGroups.map(group => {
+          const expanded = expandedMonths.has(group.month)
+          return <tbody key={group.month} className="month-group">
+            <tr className="month-group-row"><td colSpan={17}><button type="button" className="month-toggle" aria-expanded={expanded} onClick={() => setExpandedMonths(current => {
+              const next = new Set(current)
+              if (next.has(group.month)) next.delete(group.month)
+              else next.add(group.month)
+              return next
+            })}>
+              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              <strong>{group.month.replace('-', '年')}月</strong>
+              <span>{group.rows.length} 天</span>
+              {group.total && <span className="month-total">订单净回款 {money(group.total.currentNet)}</span>}
+            </button></td></tr>
+            {expanded && group.rows.map(row => <tr key={row.date}><td className="cell-main">{row.date}</td><td>{row.orderCount}</td><td>{money(row.originalSales)}</td><td>{money(row.shippedRefund)}</td><td>{money(row.couponRefund)}</td><td>{money(row.effectiveSales)}</td><td>{money(row.basicServiceFee)}</td><td>{money(row.afterSaleCompensation)}</td><td>{money(row.smallPayment)}</td><td>{money(row.appealReimbursement)}</td><td>{money(row.productCost)}</td><td>{money(row.promotionFee)}</td><td>{money(row.estimatedProfit)}</td><td>{money(row.currentNet)}</td><td>{money(row.unsettledAmount)}</td><td className={row.profit != null && row.profit < 0 ? 'negative' : 'positive'}>{money(row.profit)}</td><td><span className={`status ${row.mature ? 'normal' : 'risk'}`}><i />{row.mature ? '已完成' : '未完成'}</span></td></tr>)}
+          </tbody>
+        })}
+      </table></div>
+    </section>}
   </div>
 }
 
