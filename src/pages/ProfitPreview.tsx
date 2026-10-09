@@ -10,16 +10,15 @@ import { createProfitPreviewSheet } from '../utils/profitWorkbook'
 
 type Row = Record<string, string | number>
 type ProfitOrder = { key: string; orderId: string; date: string; skuCode: string; specification: string; productItemId: string; quantity: number; receipt: number; status: string }
-type CostMatch = { cost?: ProductCost; productId: string; source: '编码' | '规格' | '手动' | '不计成本' }
+type CostMatch = { cost?: ProductCost; productId: string; source: '编码' | '规格' | '手动' | '忽略' }
 type SkuGroup = { key: string; skuCode: string; specification: string; quantity: number; receipt: number; orders: ProfitOrder[]; match?: CostMatch }
 type ProfitMetric = { date: string; productId: string; product: string; rate: number; amount: number; cost: number; grossProfit: number; promotion: number; operationFee: number; estimatedProfit: number; quantity: number; margin: number }
 type ImportRange = { startDate: string; endDate: string }
 type PromotionOcrRow = { date: string; amount: number; matched: boolean }
 
 const invalidStatus = ['退款', '取消', '待付款', '未付款']
-const noCostChoice = '__no_cost__'
-const noCostProductId = '__no_cost_income__'
-const noCostProductName = '小额收款（不计成本）'
+const ignoreChoice = '__no_cost__'
+const legacyNoCostProductId = '__no_cost_income__'
 const cleanText = (value: unknown) => value == null ? '' : String(value).replace(/\t/g, '').trim()
 const cleanNumber = (value: unknown) => Math.round((Number(cleanText(value).replace(/[,¥￥]/g, '')) || 0) * 100) / 100
 const normalize = (value: string) => value.toLowerCase().replace(/[\s【】\[\]（）()*/×·,，-]/g, '')
@@ -98,16 +97,16 @@ export function ProfitPreview() {
   const productIds = new Set(clientProducts.map(product => product.id))
   const availableCosts = data.productCosts.filter(cost => productIds.has(cost.productId))
   const activeStores = data.stores.filter(item => item.storeStatus !== '暂停')
-  const savedRecords = useMemo(() => data.profitRecords.filter(record => record.storeId === storeId).sort((a, b) => b.date.localeCompare(a.date) || a.productId.localeCompare(b.productId)), [data.profitRecords, storeId])
+  const savedRecords = useMemo(() => data.profitRecords.filter(record => record.storeId === storeId && record.productId !== legacyNoCostProductId).sort((a, b) => b.date.localeCompare(a.date) || a.productId.localeCompare(b.productId)), [data.profitRecords, storeId])
   const savedPromotions = useMemo(() => new Map(savedRecords.map(record => [`${record.date}|${record.productId}`, record.promotion])), [savedRecords])
-  const productName = (productId: string) => productId === noCostProductId ? noCostProductName : data.products.find(product => product.id === productId)?.name || '已删除产品'
+  const productName = (productId: string) => data.products.find(product => product.id === productId)?.name || '已删除产品'
 
   const clearResults = () => { setOrders(new Map()); setManualMatches(new Map()); setPromotions(new Map()); setMessages([]); setImportRanges([]); setOcrRows([]); setOcrStatus(''); setError('') }
 
   const resolveCost = (order: ProfitOrder): CostMatch | undefined => {
     const manualId = manualMatches.get(`${order.skuCode}|${order.specification}`)
     const linkedProductId = data.productLinks.find(link => link.storeId === storeId && link.linkId === order.productItemId)?.productId
-    if (manualId === noCostChoice) return { productId: linkedProductId || noCostProductId, source: '不计成本' }
+    if (manualId === ignoreChoice) return { productId: '', source: '忽略' }
     if (manualId) { const cost = availableCosts.find(item => item.id === manualId); if (cost) return { cost, productId: cost.productId, source: '手动' } }
     const scoped = linkedProductId ? availableCosts.filter(cost => cost.productId === linkedProductId) : availableCosts
     const codeMatches = scoped.filter(cost => order.skuCode && cost.skuCode.trim() === order.skuCode)
@@ -135,10 +134,11 @@ export function ProfitPreview() {
       if (!isValidOrder(order)) return
       const match = resolveCost(order)
       if (!match) return
+      if (match.source === '忽略') return
       const product = data.products.find(item => item.id === match.productId)
-      if (!product && match.productId !== noCostProductId) return
+      if (!product) return
       const key = `${order.date}|${match.productId}`
-      const row = rows.get(key) || { date: order.date, productId: match.productId, product: product?.name || noCostProductName, rate: product?.operationRate || 0, amount: 0, cost: 0, grossProfit: 0, promotion: 0, operationFee: 0, estimatedProfit: 0, quantity: 0, margin: 0 }
+      const row = rows.get(key) || { date: order.date, productId: match.productId, product: product.name, rate: product.operationRate, amount: 0, cost: 0, grossProfit: 0, promotion: 0, operationFee: 0, estimatedProfit: 0, quantity: 0, margin: 0 }
       row.amount += order.receipt; row.cost += order.quantity * (match.cost?.totalCost || 0); row.quantity += order.quantity; rows.set(key, row)
     })
     return [...rows.values()].map(row => {
@@ -186,6 +186,11 @@ export function ProfitPreview() {
       margin: record.margin,
     }))
   }, [data.products, data.profitRecords, data.stores, exportClientId])
+
+  useEffect(() => {
+    if (!data.profitRecords.some(record => record.productId === legacyNoCostProductId)) return
+    update(current => ({ ...current, profitRecords: current.profitRecords.filter(record => record.productId !== legacyNoCostProductId) }))
+  }, [data.profitRecords, update])
 
   useEffect(() => {
     if (!storeId || !orders.size || !importRanges.length || unmatched.length) return
@@ -302,7 +307,7 @@ export function ProfitPreview() {
   const writeProfitWorkbook = (rows: typeof exportMetrics, filename: string, includeSkuMatches = false) => {
     const workbook = XLSXStyle.utils.book_new()
     XLSXStyle.utils.book_append_sheet(workbook, createProfitPreviewSheet(rows), '毛利预览表')
-    if (includeSkuMatches && skuGroups.length) XLSXStyle.utils.book_append_sheet(workbook, XLSXStyle.utils.json_to_sheet(skuGroups.map(group => ({ SKU编码: group.skuCode, 商品规格: group.specification, 销量: group.quantity, 实收金额: round(group.receipt), 匹配方式: group.match?.source || '未匹配', 成本SKU: group.match?.source === '不计成本' ? '小额收款（不计成本）' : group.match?.cost?.skuCode || '', 单件成本: group.match ? group.match.cost?.totalCost ?? 0 : '' }))), 'SKU匹配')
+    if (includeSkuMatches && skuGroups.length) XLSXStyle.utils.book_append_sheet(workbook, XLSXStyle.utils.json_to_sheet(skuGroups.map(group => ({ SKU编码: group.skuCode, 商品规格: group.specification, 销量: group.quantity, 实收金额: round(group.receipt), 处理方式: group.match?.source || '未匹配', 成本SKU: group.match?.source === '忽略' ? '已忽略，不参与毛利计算' : group.match?.cost?.skuCode || '', 单件成本: group.match?.source === '忽略' ? '' : group.match?.cost?.totalCost ?? '' }))), 'SKU匹配')
     XLSXStyle.writeFile(workbook, filename)
   }
 
@@ -325,7 +330,7 @@ export function ProfitPreview() {
     <section className="panel pdd-import profit-import promotion-ocr-panel"><div><div className="field"><span>截图识别推广费</span><strong>识别日期和“成交花费(元)”</strong></div><p>截图仅在浏览器本地识别；同一天多个产品按实收比例分配。识别后仍可在毛利预览表中手动修改推广费。</p>{ocrStatus && <div className="ocr-status"><ScanText size={15} /><span>{ocrStatus}</span></div>}{ocrRows.length > 0 && <div className="ocr-result-list">{ocrRows.map(row => <span key={row.date} className={row.matched ? '' : 'unmatched'}>{row.date} · {money(row.amount)}{row.matched ? '' : '（无订单）'}</span>)}</div>}</div><button className="button secondary" disabled={ocrBusy || !storeId || !metrics.length || unmatched.length > 0} onClick={() => promotionImageRef.current?.click()}><ScanText size={16} />{ocrBusy ? '正在识别…' : '选择推广费截图'}</button><input ref={promotionImageRef} hidden type="file" multiple accept="image/png,image/jpeg,image/webp" onChange={event => event.target.files && void importPromotionImages(event.target.files)} /></section>
     {error && <div className="pdd-message error">{error}</div>}
     {messages.length > 0 && <div className="pdd-message ok"><FileSpreadsheet size={16} /><span>{messages.join('；')}</span></div>}
-    {skuGroups.length > 0 && <section className="panel table-panel pdd-cost-panel"><div className="table-caption"><div><strong>SKU 成本匹配</strong><span>先按商家编码匹配；未匹配项可选择成本 SKU，或标记为小额收款不计商品成本。</span></div><div className="cost-count"><b>{skuGroups.length - unmatched.length}</b> 个已处理 · <b>{unmatched.length}</b> 个待处理</div></div><div className="table-scroll"><table><thead><tr><th>报表 SKU</th><th>商品规格</th><th>销量</th><th>匹配方式</th><th>成本 SKU / 产品</th><th>单件成本</th></tr></thead><tbody>{skuGroups.map(group => { const match = group.match; const manualChoice = manualMatches.get(group.key) || ''; const editable = !match || Boolean(manualChoice); return <tr key={group.key}><td><strong className="cell-main">{group.skuCode || '空编码'}</strong></td><td>{group.specification || '—'}</td><td>{group.quantity}</td><td>{match ? <span className={`link-status ${match.source === '不计成本' ? 'status-备用' : 'status-日销'}`}>{match.source === '不计成本' ? '不计成本' : `${match.source}匹配`}</span> : <span className="link-status status-已挂">待匹配</span>}</td><td>{editable ? <select value={manualChoice} onChange={event => setManualMatches(current => { const next = new Map(current); if (event.target.value) next.set(group.key, event.target.value); else next.delete(group.key); return next })}><option value="">请选择成本 SKU</option><option value={noCostChoice}>无需匹配（小额收款，不计成本）</option>{availableCosts.map(cost => <option key={cost.id} value={cost.id}>{data.products.find(product => product.id === cost.productId)?.name} · {cost.skuCode} · {cost.specification}</option>)}</select> : <><div className="cell-main">{match.cost?.skuCode}</div><div className="cell-sub">{productName(match.productId)} · {match.cost?.specification}</div></>}</td><td>{match ? money(match.cost?.totalCost || 0) : '—'}</td></tr> })}</tbody></table></div></section>}
+    {skuGroups.length > 0 && <section className="panel table-panel pdd-cost-panel"><div className="table-caption"><div><strong>SKU 成本匹配</strong><span>先按商家编码匹配；不属于正常商品的收款可直接忽略，不参与任何毛利计算和导出。</span></div><div className="cost-count"><b>{skuGroups.length - unmatched.length}</b> 个已处理 · <b>{unmatched.length}</b> 个待处理</div></div><div className="table-scroll"><table><thead><tr><th>报表 SKU</th><th>商品规格</th><th>销量</th><th>处理方式</th><th>成本 SKU / 产品</th><th>单件成本</th></tr></thead><tbody>{skuGroups.map(group => { const match = group.match; const manualChoice = manualMatches.get(group.key) || ''; const editable = !match || Boolean(manualChoice); return <tr key={group.key}><td><strong className="cell-main">{group.skuCode || '空编码'}</strong></td><td>{group.specification || '—'}</td><td>{group.quantity}</td><td>{match ? <span className={`link-status ${match.source === '忽略' ? 'status-备用' : 'status-日销'}`}>{match.source === '忽略' ? '已忽略' : `${match.source}匹配`}</span> : <span className="link-status status-已挂">待匹配</span>}</td><td>{editable ? <select value={manualChoice} onChange={event => setManualMatches(current => { const next = new Map(current); if (event.target.value) next.set(group.key, event.target.value); else next.delete(group.key); return next })}><option value="">请选择成本 SKU</option><option value={ignoreChoice}>忽略该行（不参与毛利计算）</option>{availableCosts.map(cost => <option key={cost.id} value={cost.id}>{data.products.find(product => product.id === cost.productId)?.name} · {cost.skuCode} · {cost.specification}</option>)}</select> : <><div className="cell-main">{match.cost?.skuCode}</div><div className="cell-sub">{productName(match.productId)} · {match.cost?.specification}</div></>}</td><td>{match?.source === '忽略' ? '—' : match ? money(match.cost?.totalCost || 0) : '—'}</td></tr> })}</tbody></table></div></section>}
     {unmatched.length > 0 && <div className="pdd-message error">还有 {unmatched.length} 个 SKU 未匹配成本，毛利结果暂不完整；完成匹配后即可导出。</div>}
     {total && <><section className="pdd-metrics">{[['商家实收', money(total.amount)], ['商品成本', money(total.cost)], ['推广费', money(total.promotion)], ['运营费', money(total.operationFee)], ['毛利预估', money(total.estimatedProfit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section><section className="panel table-panel"><div className="table-caption"><div><strong>本次毛利预览</strong><span>毛利预估＝实收金额－成本－推广费－运营费；推广费支持截图识别，也可继续手动填写修改。</span></div><div className="cost-count">云端状态：<b>{syncStatus === 'saving' ? '保存中…' : syncStatus === 'error' ? '保存失败' : '已保存'}</b></div></div><div className="table-scroll"><table><thead><tr>{['日期','产品','实收金额','成本','毛利','推广费（识别/手填）','运营费率','运营费','毛利预估','销量','毛利率'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody>{metrics.map(row => { const key = `${row.date}|${row.productId}`; return <tr key={key}><td>{row.date}</td><td><strong className="cell-main">{row.product}</strong></td><td>{money(row.amount)}</td><td>{money(row.cost)}</td><td>{money(row.grossProfit)}</td><td><input className="cost-input promo-input" aria-label={`${row.date} ${row.product} 推广费`} type="number" min="0" step="0.01" value={promotions.has(key) ? promotions.get(key) : savedPromotions.get(key) ?? 0} onChange={event => setPromotions(current => { const next = new Map(current); next.set(key, Number(event.target.value || 0)); return next })} /></td><td>{(row.rate * 100).toFixed(2).replace(/\.00$/, '')}%</td><td>{money(row.operationFee)}</td><td className={row.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(row.estimatedProfit)}</td><td>{row.quantity}</td><td>{(row.margin * 100).toFixed(2)}%</td></tr> })}</tbody></table></div></section></>}
     {savedTotal && <section className="panel table-panel saved-profit-panel"><div className="table-caption"><div><strong>已保存每日毛利</strong><span>仅保存每日汇总，不保存订单明细；相同店铺、日期和产品再次导入时自动覆盖。</span></div><div className="cost-count"><b>{savedRecords.length}</b> 条每日记录</div></div><div className="table-scroll"><table><thead><tr>{['日期','产品','实收金额','成本','推广费','运营费','毛利预估','销量','毛利率'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody><tr className="profit-total-row"><td><strong>累计汇总</strong></td><td>{savedRecords.length ? `${savedRecords[savedRecords.length - 1].date} 至 ${savedRecords[0].date}` : '—'}</td><td>{money(savedTotal.amount)}</td><td>{money(savedTotal.cost)}</td><td>{money(savedTotal.promotion)}</td><td>{money(savedTotal.operationFee)}</td><td className={savedTotal.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(savedTotal.estimatedProfit)}</td><td>{savedTotal.quantity}</td><td>{savedTotal.amount ? `${(savedTotal.estimatedProfit / savedTotal.amount * 100).toFixed(2)}%` : '0.00%'}</td></tr>{savedRecords.map(record => <tr key={record.id}><td>{record.date}</td><td><strong className="cell-main">{productName(record.productId)}</strong></td><td>{money(record.amount)}</td><td>{money(record.cost)}</td><td>{money(record.promotion)}</td><td>{money(record.operationFee)}</td><td className={record.estimatedProfit < 0 ? 'negative' : 'positive'}>{money(record.estimatedProfit)}</td><td>{record.quantity}</td><td>{(record.margin * 100).toFixed(2)}%</td></tr>)}</tbody></table></div></section>}
