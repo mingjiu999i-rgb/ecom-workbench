@@ -12,6 +12,7 @@ type ProfitOrder = { key: string; orderId: string; date: string; skuCode: string
 type CostMatch = { cost: ProductCost; source: '编码' | '规格' | '手动' }
 type SkuGroup = { key: string; skuCode: string; specification: string; quantity: number; receipt: number; orders: ProfitOrder[]; match?: CostMatch }
 type ProfitMetric = { date: string; productId: string; product: string; rate: number; amount: number; cost: number; grossProfit: number; promotion: number; operationFee: number; estimatedProfit: number; quantity: number; margin: number }
+type ImportRange = { startDate: string; endDate: string }
 
 const invalidStatus = ['退款', '取消', '待付款', '未付款']
 const cleanText = (value: unknown) => value == null ? '' : String(value).replace(/\t/g, '').trim()
@@ -53,6 +54,7 @@ export function ProfitPreview() {
   const [manualMatches, setManualMatches] = useState<Map<string, string>>(new Map())
   const [promotions, setPromotions] = useState<Map<string, number>>(new Map())
   const [messages, setMessages] = useState<string[]>([])
+  const [importRanges, setImportRanges] = useState<ImportRange[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -64,7 +66,7 @@ export function ProfitPreview() {
   const savedRecords = useMemo(() => data.profitRecords.filter(record => record.storeId === storeId).sort((a, b) => b.date.localeCompare(a.date) || a.productId.localeCompare(b.productId)), [data.profitRecords, storeId])
   const savedPromotions = useMemo(() => new Map(savedRecords.map(record => [`${record.date}|${record.productId}`, record.promotion])), [savedRecords])
 
-  const clearResults = () => { setOrders(new Map()); setManualMatches(new Map()); setPromotions(new Map()); setMessages([]); setError('') }
+  const clearResults = () => { setOrders(new Map()); setManualMatches(new Map()); setPromotions(new Map()); setMessages([]); setImportRanges([]); setError('') }
 
   const resolveCost = (order: ProfitOrder): CostMatch | undefined => {
     const manualId = manualMatches.get(`${order.skuCode}|${order.specification}`)
@@ -149,9 +151,12 @@ export function ProfitPreview() {
   }, [data.products, data.profitRecords, data.stores, exportClientId])
 
   useEffect(() => {
-    if (!storeId || !orders.size || !metrics.length || unmatched.length) return
+    if (!storeId || !orders.size || !importRanges.length || unmatched.length) return
     const fields: (keyof ProfitRecord)[] = ['amount', 'cost', 'grossProfit', 'promotion', 'operationRate', 'operationFee', 'estimatedProfit', 'quantity', 'margin']
-    const changed = metrics.some(row => {
+    const incomingKeys = new Set(metrics.map(row => `${storeId}|${row.date}|${row.productId}`))
+    const coveredByImport = (date: string) => importRanges.some(range => date >= range.startDate && date <= range.endDate)
+    const staleRecord = data.profitRecords.some(record => record.storeId === storeId && coveredByImport(record.date) && !incomingKeys.has(`${record.storeId}|${record.date}|${record.productId}`))
+    const changed = staleRecord || metrics.some(row => {
       const existing = data.profitRecords.find(record => record.storeId === storeId && record.date === row.date && record.productId === row.productId)
       return !existing || fields.some(field => existing[field] !== (field === 'operationRate' ? row.rate : row[field as keyof ProfitMetric]))
     })
@@ -162,10 +167,10 @@ export function ProfitPreview() {
         const record: ProfitRecord = { id, storeId, productId: row.productId, date: row.date, amount: row.amount, cost: row.cost, grossProfit: row.grossProfit, promotion: row.promotion, operationRate: row.rate, operationFee: row.operationFee, estimatedProfit: row.estimatedProfit, quantity: row.quantity, margin: row.margin, updatedAt: new Date().toISOString() }
         return [`${storeId}|${row.date}|${row.productId}`, record]
       }))
-      return { ...current, profitRecords: [...current.profitRecords.filter(record => !incoming.has(`${record.storeId}|${record.date}|${record.productId}`)), ...incoming.values()] }
+      return { ...current, profitRecords: [...current.profitRecords.filter(record => record.storeId !== storeId || !coveredByImport(record.date)), ...incoming.values()] }
     }), 600)
     return () => window.clearTimeout(timer)
-  }, [data.profitRecords, metrics, orders.size, storeId, unmatched.length, update])
+  }, [data.profitRecords, importRanges, metrics, orders.size, storeId, unmatched.length, update])
 
   const importTable = (name: string, table: unknown[][], next: Map<string, ProfitOrder>) => {
     const headerIndex = table.slice(0, 30).findIndex(row => { const headers = new Set(row.map(cleanText)); return headers.has('订单状态') && headers.has('商品数量(件)') && headers.has('商家实收金额(元)') && (headers.has('支付时间') || headers.has('订单成交时间')) })
@@ -180,22 +185,23 @@ export function ProfitPreview() {
       const key = orderId || JSON.stringify([name, index, payTime, skuCode, specification, row['商家实收金额(元)']])
       next.set(key, { key, orderId, date: dateText(payTime), skuCode, specification, productItemId: cleanText(row['商品id'] || row['商品ID']), quantity: cleanNumber(row['商品数量(件)']), receipt: cleanNumber(row['商家实收金额(元)']), status: cleanText(row['订单状态']) })
     })
-    return rows.length
+    const dates = rows.map(row => dateText(row['支付时间'] || row['订单成交时间'])).filter(Boolean).sort()
+    return { count: rows.length, startDate: dates[0] || '', endDate: dates[dates.length - 1] || '' }
   }
 
   const importFiles = async (files: FileList) => {
     if (!storeId) { setError('请先选择店铺'); return }
     setBusy(true); setError('')
     try {
-      const next = new Map<string, ProfitOrder>(); const imported: string[] = []
-      const consume = async (name: string, buffer: ArrayBuffer) => imported.push(`${name}：${importTable(name, parseTable(buffer, name), next)} 行`)
+      const next = new Map<string, ProfitOrder>(); const imported: string[] = []; const ranges: ImportRange[] = []
+      const consume = async (name: string, buffer: ArrayBuffer) => { const result = importTable(name, parseTable(buffer, name), next); imported.push(`${name}：${result.count} 行`); if (result.startDate && result.endDate) ranges.push({ startDate: result.startDate, endDate: result.endDate }) }
       for (const file of Array.from(files)) {
         if (file.name.toLowerCase().endsWith('.zip')) {
           const zip = await JSZip.loadAsync(await file.arrayBuffer())
           for (const entry of Object.values(zip.files)) if (!entry.dir && /\.(csv|xls|xlsx)$/i.test(entry.name)) await consume(entry.name.split('/').pop() || entry.name, await entry.async('arraybuffer'))
         } else await consume(file.name, await file.arrayBuffer())
       }
-      setOrders(next); setMessages(current => [...imported, ...current].slice(0, 10))
+      setOrders(next); setImportRanges(ranges); setMessages(current => [...imported, ...current].slice(0, 10))
     } catch (cause) { setError(cause instanceof Error ? cause.message : '订单报表解析失败') } finally { setBusy(false); if (inputRef.current) inputRef.current.value = '' }
   }
 
