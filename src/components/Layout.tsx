@@ -1,4 +1,4 @@
-import { BarChart3, Box, Calculator, Check, ClipboardList, Cloud, CloudAlert, Database, LayoutDashboard, LogOut, Menu, ReceiptText, X } from 'lucide-react'
+import { BarChart3, Box, Calculator, Check, ClipboardList, Cloud, CloudAlert, Database, LayoutDashboard, LogOut, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
@@ -9,8 +9,7 @@ const items = [
   { to: '/product-costs', label: '产品成本', icon: Calculator },
   { to: '/operations', label: '调整记录', icon: ClipboardList },
   { to: '/master-data', label: '基础资料', icon: Database },
-  { to: '/pdd-analyzer', label: '订单回款', icon: ReceiptText },
-  { to: '/profit-preview', label: '毛利预览', icon: BarChart3 },
+  { to: '/profit-preview', label: '经营结算', icon: BarChart3 },
 ]
 
 export function Layout() {
