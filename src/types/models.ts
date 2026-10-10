@@ -41,7 +41,7 @@ export interface ProfitRecord {
 }
 export interface CollectionRecord {
   id: string; storeId: string; date: string; orderCount: number
-  originalSales: number; effectiveSales: number; shippedRefund: number; couponRefund: number
+  originalSales: number; effectiveSales: number; shippedRefund: number; orderShippedRefund?: number; refundBasis?: 'refund_completed_at'; couponRefund: number
   basicServiceFee: number; afterSaleCompensation: number; smallPayment: number; appealReimbursement: number
   productCost: number | null; promotionFee: number; estimatedProfit: number | null
   currentNet: number; unsettledAmount: number; profit: number | null
