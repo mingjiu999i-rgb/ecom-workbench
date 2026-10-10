@@ -38,6 +38,7 @@ export function Dashboard() {
     : performanceRange === 'month'
       ? { start: monthStart, end: today }
       : { start: performanceStart, end: performanceEnd }
+  // Keep the overview consistent with the saved daily figures in 经营结算.
   const performance = useMemo(() => {
     const records = selectedRange.start && selectedRange.end && selectedRange.start <= selectedRange.end
       ? data.profitRecords.filter(record => record.date >= selectedRange.start && record.date <= selectedRange.end)
