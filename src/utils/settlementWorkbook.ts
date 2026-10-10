@@ -10,6 +10,11 @@ export type SettlementExportOptions = {
   endDate?: string
 }
 
+export type SettlementExportValidation = {
+  blocking: string[]
+  warnings: string[]
+}
+
 const colors = {
   navy: '243B64', charcoal: '26323C', blue: '4F74D9', yellow: 'FFF200', teal: 'A8E3DF',
   paleBlue: 'E8EEF3', paleOrange: 'FFF6E5', paleTeal: 'EAF8F5', text: '263247', muted: '718096',
@@ -103,16 +108,20 @@ function aggregateProfitRows(rows: ProfitRecord[]) {
   return [...grouped.values()]
 }
 
-export function settlementExportIssues(data: WorkbenchData, options: SettlementExportOptions) {
-  const storeIds = new Set(data.stores.filter(store => store.clientId === options.clientId).map(store => store.id))
+export function settlementExportValidation(data: WorkbenchData, options: SettlementExportOptions): SettlementExportValidation {
+  const stores = data.stores.filter(store => store.clientId === options.clientId && store.storeStatus !== '暂停')
+  const storeIds = new Set(stores.map(store => store.id))
   const collection = data.collectionRecords.filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
   const profits = data.profitRecords.filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
-  const issues: string[] = []
-  if (!collection.length) issues.push('所选甲方和日期范围内没有订单回款数据')
+  const blocking: string[] = []
+  const warnings: string[] = []
+  if (!collection.length) blocking.push('所选甲方和日期范围内没有订单回款数据')
   const missingCost = collection.reduce((total, row) => total + Number(row.missingCostOrders || 0), 0)
-  if (missingCost) issues.push(`还有 ${missingCost} 个订单未匹配成本`)
-  const legacyRefundRows = collection.filter(row => row.refundBasis !== 'refund_completed_at').length
-  if (legacyRefundRows) issues.push(`有 ${legacyRefundRows} 天仍是旧版售后口径，请重新导入对应店铺报表`)
+  if (missingCost) blocking.push(`还有 ${missingCost} 个订单未匹配成本，无法准确计算利润`)
+  stores.forEach(store => {
+    const count = collection.filter(row => row.storeId === store.id && row.refundBasis !== 'refund_completed_at').length
+    if (count) warnings.push(`${store.name}：${count} 天仍是旧版售后口径`)
+  })
   const profitByStoreDate = new Map<string, ProfitRecord[]>()
   profits.forEach(row => profitByStoreDate.set(`${row.storeId}|${row.date}`, [...(profitByStoreDate.get(`${row.storeId}|${row.date}`) || []), row]))
   const unsynced = collection.filter(row => {
@@ -123,8 +132,11 @@ export function settlementExportIssues(data: WorkbenchData, options: SettlementE
       || Math.abs(sum(productRows, item => item.cost) - Number(row.productCost || 0)) > 0.02
       || Math.abs(sum(productRows, item => item.promotion) - row.promotionFee) > 0.02
   })
-  if (unsynced.length) issues.push(`有 ${unsynced.length} 天的产品利润数据尚未同步，请重新导入对应店铺报表`)
-  return issues
+  stores.forEach(store => {
+    const count = unsynced.filter(row => row.storeId === store.id).length
+    if (count) warnings.push(`${store.name}：${count} 天的产品利润数据尚未同步`)
+  })
+  return { blocking, warnings }
 }
 
 function setCell(sheet: XLSX.WorkSheet, row: number, column: number, value: CellValue, style?: XLSX.CellStyle) {
@@ -319,8 +331,9 @@ export function createSettlementWorkbook(data: WorkbenchData, options: Settlemen
   return workbook
 }
 
-export function exportSettlementWorkbook(data: WorkbenchData, options: SettlementExportOptions) {
-  const issues = settlementExportIssues(data, options)
+export function exportSettlementWorkbook(data: WorkbenchData, options: SettlementExportOptions, allowWarnings = false) {
+  const validation = settlementExportValidation(data, options)
+  const issues = [...validation.blocking, ...(allowWarnings ? [] : validation.warnings)]
   if (issues.length) throw new Error(issues.join('；'))
   const clientName = data.clients.find(item => item.id === options.clientId)?.name || '甲方'
   const range = options.startDate || options.endDate ? `${options.startDate || '最早'}_${options.endDate || '最新'}` : '全部日期'

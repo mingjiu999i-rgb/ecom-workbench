@@ -2,10 +2,11 @@ import JSZip from 'jszip'
 import { ChevronDown, ChevronRight, Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from '@e965/xlsx'
+import { Modal } from '../components/Overlay'
 import { useWorkbench } from '../store/workbench'
 import type { CollectionRecord, ProfitRecord } from '../types/models'
 import { isSupplementOrder, normalizeSpecification, resolveProductCost, type ProductCostMatch } from '../utils/orderCostMatching'
-import { exportSettlementWorkbook, settlementExportIssues } from '../utils/settlementWorkbook'
+import { exportSettlementWorkbook, settlementExportValidation } from '../utils/settlementWorkbook'
 
 type Row = Record<string, string | number>
 type Order = { id: string; shop: string; payTime: string; payDate: string; receipt: number; status: string; productId: string; product: string; specification: string; skuCode: string; quantity: number }
@@ -106,6 +107,7 @@ export function PddAnalyzer() {
   const [messages, setMessages] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [exportWarnings, setExportWarnings] = useState<string[]>([])
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set())
   const store = data.stores.find(item => item.id === storeId)
   const shop = store?.name || ''
@@ -205,7 +207,7 @@ export function PddAnalyzer() {
   const exportOptions = useMemo(() => ({ clientId: exportClientId, startDate, endDate }), [endDate, exportClientId, startDate])
   const exportStoreIds = useMemo(() => new Set(data.stores.filter(item => item.clientId === exportClientId).map(item => item.id)), [data.stores, exportClientId])
   const exportRecordCount = useMemo(() => data.collectionRecords.filter(record => exportStoreIds.has(record.storeId) && (!startDate || record.date >= startDate) && (!endDate || record.date <= endDate)).length, [data.collectionRecords, endDate, exportStoreIds, startDate])
-  const exportIssues = useMemo(() => exportClientId ? settlementExportIssues(data, exportOptions) : [], [data, exportClientId, exportOptions])
+  const exportValidation = useMemo(() => exportClientId ? settlementExportValidation(data, exportOptions) : { blocking: [], warnings: [] }, [data, exportClientId, exportOptions])
 
   useEffect(() => {
     if (!storeId || busy || !orders.size || !funds.size || !summaries.length) return
@@ -250,15 +252,22 @@ export function PddAnalyzer() {
   const clear = () => { setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCostIds(new Map()); setMessages([]); setError('') }
   const exportResult = () => {
     if (!exportClientId) { setError('请先选择要导出的甲方'); return }
-    if (exportIssues.length) { setError(exportIssues.join('；')); return }
-    try { exportSettlementWorkbook(data, exportOptions) } catch (cause) { setError(cause instanceof Error ? cause.message : '经营结算表导出失败') }
+    if (exportValidation.blocking.length) { setError(exportValidation.blocking.join('；')); return }
+    if (exportValidation.warnings.length) { setExportWarnings(exportValidation.warnings); return }
+    try { exportSettlementWorkbook(data, exportOptions, true) } catch (cause) { setError(cause instanceof Error ? cause.message : '经营结算表导出失败') }
+  }
+
+  const confirmWarningExport = () => {
+    setExportWarnings([])
+    try { exportSettlementWorkbook(data, exportOptions, true) } catch (cause) { setError(cause instanceof Error ? cause.message : '经营结算表导出失败') }
   }
 
   return <div className="page page-wide pdd-page">
     <div className="page-heading"><div><span className="eyebrow">订单回款 + 产品利润</span><h1>甲方经营结算</h1><p>一次导入同时更新各店铺回款与跨店产品利润，导出甲方汇总和每店独立回款明细。</p></div><div className="heading-actions"><button className="button secondary" onClick={clear}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>仅保存计算结果</strong><span>上传文件、订单明细、退款明细和资金流水不会保存或上传到云端。</span></div></section>
     <section className="panel pdd-import"><div><label className="field"><span>选择店铺</span><select value={storeId} onChange={event => { const nextStoreId = event.target.value; setStoreId(nextStoreId); setExportClientId(data.stores.find(item => item.id === nextStoreId)?.clientId || ''); clear() }}><option value="">请选择店铺</option>{activeStores.map(item => <option key={item.id} value={item.id}>{data.clients.find(client => client.id === item.clientId)?.name} · {item.name}</option>)}</select></label><p>一次选择同一店铺的订单、退款、资金和推广费文件；每次导入会同时更新回款明细与产品利润。</p></div><button className="button primary" disabled={busy || !storeId} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
-    <section className="panel pdd-import profit-import"><div><div className="form-grid"><label className="field field-full"><span>导出甲方</span><select value={exportClientId} onChange={event => setExportClientId(event.target.value)}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>开始日期</span><input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label className="field"><span>结束日期</span><input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div><p>导出“甲方汇总 + 每个店铺独立回款明细”；日期留空表示全部。{exportIssues.length ? ` 当前需处理：${exportIssues.join('；')}` : exportRecordCount ? ` 已找到 ${exportRecordCount} 条回款记录。` : ''}</p></div><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></section>
+    <section className="panel pdd-import profit-import"><div><div className="form-grid"><label className="field field-full"><span>导出甲方</span><select value={exportClientId} onChange={event => setExportClientId(event.target.value)}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>开始日期</span><input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label className="field"><span>结束日期</span><input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div><p>导出“甲方汇总 + 每个店铺独立回款明细”；日期留空表示全部。{exportValidation.blocking.length ? ` 当前无法导出：${exportValidation.blocking.join('；')}` : exportValidation.warnings.length ? ' 当前有数据提醒，点击导出后可选择重新导入或忽略提醒继续。' : exportRecordCount ? ` 已找到 ${exportRecordCount} 条回款记录。` : ''}</p></div><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></section>
+    {exportValidation.warnings.length > 0 && <div className="pdd-message warning"><strong>数据提醒</strong><span>{exportValidation.warnings.join('；')}。仍可点击“导出甲方结算”选择忽略并继续。</span></div>}
     {error && <div className="pdd-message error">{error}</div>}
     {messages.length > 0 && <div className="pdd-message ok"><FileSpreadsheet size={16} /><span>{messages.join('；')}</span></div>}
     {deductionBreakdown.length > 0 && <section className="panel table-panel pdd-deduction-panel"><div className="table-caption"><div><strong>扣款明细（按业务分类）</strong><span>按资金原表全量业务代码分别汇总；扣款与补回独立展示，不相互抵消。</span></div><div className="cost-count">扣款 <b>{money(deductionTotals.deduction)}</b> · 补回 <b>{money(deductionTotals.reimbursement)}</b> · 净扣款 <b>{money(deductionTotals.netDeduction)}</b></div></div><div className="table-scroll"><table><thead><tr>{['业务代码','扣款分类','账务类型','扣款笔数','扣款金额','补回笔数','补回金额','净扣款'].map(header => <th key={header}>{header}</th>)}</tr></thead><tbody><tr className="profit-total-row"><td colSpan={3}><strong>全部分类合计</strong></td><td>{deductionBreakdown.reduce((sum, row) => sum + row.deductionCount, 0)}</td><td>{money(deductionTotals.deduction)}</td><td>{deductionBreakdown.reduce((sum, row) => sum + row.reimbursementCount, 0)}</td><td>{money(deductionTotals.reimbursement)}</td><td className={deductionTotals.netDeduction < 0 ? 'positive' : 'negative'}>{money(deductionTotals.netDeduction)}</td></tr>{deductionBreakdown.map(row => <tr key={row.key}><td><strong className="cell-main">{row.businessCode || '未识别'}</strong></td><td>{row.businessName}</td><td>{row.accountType || '—'}</td><td>{row.deductionCount}</td><td>{money(row.deduction)}</td><td>{row.reimbursementCount}</td><td>{money(row.reimbursement)}</td><td className={row.netDeduction < 0 ? 'positive' : 'negative'}>{money(row.netDeduction)}</td></tr>)}</tbody></table></div></section>}
@@ -291,6 +300,7 @@ export function PddAnalyzer() {
         })}
       </table></div>
     </section>}
+    {exportWarnings.length > 0 && <Modal title="发现历史数据提醒" onClose={() => setExportWarnings([])}><div className="modal-body settlement-warning"><p>以下数据可能影响退款口径或产品利润，但不会强制阻止导出：</p><ul>{exportWarnings.map(issue => <li key={issue}>{issue}</li>)}</ul><p>选择继续后，将按当前已有数据生成经营结算表。</p></div><div className="modal-actions"><button className="button ghost" onClick={() => setExportWarnings([])}>返回重新导入</button><button className="button primary" onClick={confirmWarningExport}>忽略提醒，继续导出</button></div></Modal>}
   </div>
 }
 
