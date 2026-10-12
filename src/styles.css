@@ -69,10 +69,55 @@ h1 { margin-bottom: 6px; font-size: 28px; line-height: 1.2; letter-spacing: -.02
 .performance-panel .table-caption > span { color: #8a96a8; font-size: 11px; }
 .performance-panel th:not(:first-child), .performance-panel td:not(:first-child) { text-align: right; }
 .performance-panel .performance-fee { color: #6554c0; font-weight: 600; }
+.metric-amount, .amount-button { padding: 0; border: 0; background: transparent; text-align: inherit; }
+.metric-amount small { display: block; margin-top: 5px; color: var(--blue); font-size: 10px; }
+.amount-button { font-weight: 650; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 4px; }
+.performance-status { padding: 5px 8px; border: 0; border-radius: 6px; font-size: 11px; white-space: nowrap; }
+.performance-status.partial { color: #9a5b10; background: #fff4df; }
+.performance-status.complete { color: #187b58; background: #e9f7f0; }
+.performance-summary-status { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0 19px 12px; }
+.performance-summary-status > span { color: #8a96a8; font-size: 11px; }
+.refund-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 19px; border-top: 1px solid var(--line); background: #fafbfd; }
+.refund-overview strong { display: block; color: #475569; font-size: 13px; font-weight: 500; }
+.refund-overview b { margin-left: 8px; color: #dc4c5d; font-size: 19px; }
+.refund-overview span { display: block; margin-top: 5px; color: #8a96a8; font-size: 11px; }
+.refund-trend { padding: 15px 19px; }
+.refund-trend-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.refund-trend-heading strong { color: #475569; font-size: 13px; }
+.refund-trend-heading span, .refund-trend p { color: #8a96a8; font-size: 11px; }
+.refund-trend p { margin: 8px 0 14px; line-height: 1.7; }
+.refund-bars { display: flex; gap: 9px; overflow-x: auto; padding-bottom: 5px; }
+.refund-bars > button { flex: 1 0 36px; max-width: 100px; padding: 0; border: 0; background: transparent; color: #8490a2; font-size: 10px; }
+.refund-bar-track { display: flex; align-items: flex-end; height: 84px; margin: 0 4px 7px; border-bottom: 1px solid var(--line); }
+.refund-bar-track i { display: block; width: 100%; min-height: 3px; border-radius: 4px 4px 0 0; background: #f0929d; }
+.refund-bar-track i.no-data { background: #dde3ec; }
+.refund-bars > button:hover i { background: #dc4c5d; }
+.performance-freshness { text-align: left !important; min-width: 210px; }
+.performance-freshness > span { display: block; margin: 3px 0; color: #8490a2; font-size: 11px; }
+.freshness-warning { color: #9a5b10 !important; }
+.performance-store-table td:first-child, .performance-store-table th:first-child { position: sticky; left: 0; z-index: 1; background: #fff; }
+.performance-store-table td:last-child, .performance-store-table th:last-child { position: sticky; right: 0; z-index: 1; background: #fff; box-shadow: -4px 0 8px #17203308; }
+.performance-store-table th:first-child, .performance-store-table th:last-child { background: #f9fafc; }
+.performance-dialog p { color: #718096; font-size: 12px; line-height: 1.8; }
+.profit-breakdown { margin: 15px 0; padding: 0 15px; border: 1px solid var(--line); border-radius: 8px; }
+.profit-breakdown > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.profit-breakdown > div:last-child { border-bottom: 0; color: #263754; font-weight: 650; }
+.profit-breakdown dd { margin: 0; white-space: nowrap; }
+.profit-payment { display: flex; flex-wrap: wrap; gap: 18px; padding: 12px; margin-bottom: 16px; border-radius: 8px; background: #f7f9fc; color: #718096; font-size: 12px; }
+.profit-payment b { display: block; margin-top: 4px; color: #475569; }
+.performance-issue-list { max-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.performance-issue-list > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border-bottom: 1px solid var(--line); }
+.performance-issue-list > div:last-child { border-bottom: 0; }
+.performance-issue-list strong, .performance-issue-list span { display: block; font-size: 12px; }
+.performance-issue-list span { margin-top: 5px; color: #9a5b10; }
+.performance-issue-list .text-button { flex-shrink: 0; }
+.settlement-process-guide { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 16px; margin-bottom: 18px; border: 1px solid #ecd9b7; border-radius: 8px; background: #fff8ee; color: #9a5b10; }
+.settlement-process-guide strong { font-size: 14px; }
+.settlement-process-guide p { margin: 7px 0 0; max-width: 660px; font-size: 12px; line-height: 1.7; }
 .performance-panel .text-button, .performance-empty .text-button { display: inline-flex; align-items: center; gap: 5px; }
 .performance-dates { display: flex; align-items: center; gap: 12px; padding: 14px 19px; border-bottom: 1px solid var(--line); color: #8490a2; font-size: 12px; }
-.performance-dates label { display: flex; align-items: center; gap: 8px; }
-.performance-dates input { min-width: 0; }
+.performance-dates label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.performance-dates input { width: 155px; min-width: 0; }
 .performance-empty { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 28px 19px; color: #8490a2; font-size: 12px; }
 .settlement-detail-context { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 18px; color: #718096; font-size: 12px; }
 .saved-profit-panel { scroll-margin-top: 18px; }

@@ -1,13 +1,14 @@
 import JSZip from 'jszip'
 import { ChevronDown, ChevronRight, Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import * as XLSX from '@e965/xlsx'
 import { Modal } from '../components/Overlay'
 import { useWorkbench } from '../store/workbench'
 import type { CollectionRecord, ProfitRecord } from '../types/models'
 import { isSupplementOrder, normalizeSpecification, resolveProductCost, type ProductCostMatch } from '../utils/orderCostMatching'
 import { exportSettlementWorkbook, settlementExportValidation } from '../utils/settlementWorkbook'
+import { groupRefundsByOrderDate } from '../utils/performanceSummary'
 
 type Row = Record<string, string | number>
 type Order = { id: string; shop: string; payTime: string; payDate: string; receipt: number; status: string; productId: string; product: string; specification: string; skuCode: string; quantity: number }
@@ -15,7 +16,7 @@ type Refund = { id: string; orderId: string; shop: string; status: string; stage
 type FundCategory = 'positive' | 'refund' | 'other' | 'transfer' | 'promotion' | 'unknown'
 type Fund = { key: string; orderId: string; shop: string; occurredAt: string; income: number; expense: number; accountType: string; businessCode: string; businessName: string; businessDescription: string; category: FundCategory }
 type Promotion = { key: string; shop: string; date: string; amount: number }
-type Summary = { shop: string; date: string; orderCount: number; originalSales: number; effectiveSales: number; shippedRefund: number; orderShippedRefund: number; couponRefund: number; basicServiceFee: number; afterSaleCompensation: number; smallPayment: number; appealReimbursement: number; productCost: number | null; promotionFee: number; estimatedProfit: number | null; currentNet: number; unsettledAmount: number; profit: number | null; eligibleOrders: number; settledOrders: number; completionRate: number; mature: boolean; missingCostOrders: number; unknownFunds: number }
+type Summary = { shippedRefundByOrderDate?: Record<string, number>; shop: string; date: string; orderCount: number; originalSales: number; effectiveSales: number; shippedRefund: number; orderShippedRefund: number; couponRefund: number; basicServiceFee: number; afterSaleCompensation: number; smallPayment: number; appealReimbursement: number; productCost: number | null; promotionFee: number; estimatedProfit: number | null; currentNet: number; unsettledAmount: number; profit: number | null; eligibleOrders: number; settledOrders: number; completionRate: number; mature: boolean; missingCostOrders: number; unknownFunds: number }
 type DeductionBreakdown = { key: string; businessCode: string; businessName: string; accountType: string; deductionCount: number; deduction: number; reimbursementCount: number; reimbursement: number; netDeduction: number }
 type SkuRow = { key: string; code: string; productId: string; product: string; specification: string; quantity: number; orders: Order[]; supplement: boolean; match?: ProductCostMatch }
 type ProductMetric = { date: string; productId: string; product: string; rate: number; amount: number; cost: number; grossProfit: number; promotion: number; operationFee: number; estimatedProfit: number; quantity: number; margin: number }
@@ -96,6 +97,10 @@ const promotionColumns = (headers: Set<string>) => {
 export function PddAnalyzer() {
   const { data, update, syncStatus } = useWorkbench()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
+  const overviewReturn = searchParams.get('returnTo') || '/'
+  const returnTo = overviewReturn === '/' || overviewReturn.startsWith('/?') ? overviewReturn : '/'
+  const requestedFocus = searchParams.get('focus') || ''
   const requestedStoreId = searchParams.get('store') || ''
   const requestedStore = data.stores.find(item => item.id === requestedStoreId)
   const requestedStart = searchParams.get('start') || ''
@@ -221,12 +226,12 @@ export function PddAnalyzer() {
     if (!storeId || busy || !orders.size || !funds.size || !summaries.length) return
     const changed = summaries.some(row => {
       const existing = data.collectionRecords.find(record => record.storeId === storeId && record.date === row.date)
-      return !existing || existing.refundBasis !== 'refund_completed_at' || collectionFields.some(field => existing[field] !== row[field])
+      return !existing || existing.refundBasis !== 'refund_completed_at' || JSON.stringify(existing.shippedRefundByOrderDate) !== JSON.stringify(row.shippedRefundByOrderDate) || collectionFields.some(field => existing[field] !== row[field])
     })
     if (!changed) return
     const timer = window.setTimeout(() => update(current => {
       const incoming = new Map(summaries.map(row => {
-        const record: CollectionRecord = { id: `collection-${storeId}-${row.date}`, storeId, date: row.date, orderCount: row.orderCount, originalSales: row.originalSales, effectiveSales: row.effectiveSales, shippedRefund: row.shippedRefund, orderShippedRefund: row.orderShippedRefund, refundBasis: 'refund_completed_at', couponRefund: row.couponRefund, basicServiceFee: row.basicServiceFee, afterSaleCompensation: row.afterSaleCompensation, smallPayment: row.smallPayment, appealReimbursement: row.appealReimbursement, productCost: row.productCost, promotionFee: row.promotionFee, estimatedProfit: row.estimatedProfit, currentNet: row.currentNet, unsettledAmount: row.unsettledAmount, profit: row.profit, eligibleOrders: row.eligibleOrders, settledOrders: row.settledOrders, completionRate: row.completionRate, mature: row.mature, missingCostOrders: row.missingCostOrders, unknownFunds: row.unknownFunds, updatedAt: new Date().toISOString() }
+        const record: CollectionRecord = { id: `collection-${storeId}-${row.date}`, storeId, date: row.date, orderCount: row.orderCount, originalSales: row.originalSales, effectiveSales: row.effectiveSales, shippedRefund: row.shippedRefund, orderShippedRefund: row.orderShippedRefund, refundBasis: 'refund_completed_at', shippedRefundByOrderDate: row.shippedRefundByOrderDate, couponRefund: row.couponRefund, basicServiceFee: row.basicServiceFee, afterSaleCompensation: row.afterSaleCompensation, smallPayment: row.smallPayment, appealReimbursement: row.appealReimbursement, productCost: row.productCost, promotionFee: row.promotionFee, estimatedProfit: row.estimatedProfit, currentNet: row.currentNet, unsettledAmount: row.unsettledAmount, profit: row.profit, eligibleOrders: row.eligibleOrders, settledOrders: row.settledOrders, completionRate: row.completionRate, mature: row.mature, missingCostOrders: row.missingCostOrders, unknownFunds: row.unknownFunds, updatedAt: new Date().toISOString() }
         return [`${storeId}|${row.date}`, record]
       }))
       return { ...current, collectionRecords: [...current.collectionRecords.filter(record => !incoming.has(`${record.storeId}|${record.date}`)), ...incoming.values()] }
@@ -267,10 +272,10 @@ export function PddAnalyzer() {
   }, [requestedStore?.id, requestedStore?.clientId, requestedStart, requestedEnd])
 
   useEffect(() => {
-    if (!showSavedDetail || !storeId) return
+    if (!showSavedDetail || !storeId || requestedFocus) return
     const frame = window.requestAnimationFrame(() => savedDetailRef.current?.scrollIntoView({ block: 'start' }))
     return () => window.cancelAnimationFrame(frame)
-  }, [showSavedDetail, storeId, startDate, endDate])
+  }, [showSavedDetail, storeId, startDate, endDate, requestedFocus])
   const exportResult = () => {
     if (!exportClientId) { setError('请先选择要导出的甲方'); return }
     if (exportValidation.blocking.length) { setError(exportValidation.blocking.join('；')); return }
@@ -284,7 +289,8 @@ export function PddAnalyzer() {
   }
 
   return <div className="page page-wide pdd-page">
-    {showSavedDetail && <div className="settlement-detail-context"><Link className="text-button" to="/">← 返回总览</Link><span>{store ? `${store.name} · ${startDate || '全部日期'}${endDate && startDate !== endDate ? ` 至 ${endDate}` : ''}` : '请选择店铺查看经营结算详情'}</span></div>}
+    {showSavedDetail && <div className="settlement-detail-context"><Link className="text-button" to={returnTo}>← 返回总览</Link><span>{store ? `${store.name} · ${startDate || '全部日期'}${endDate && startDate !== endDate ? ` 至 ${endDate}` : ''}` : '请选择店铺查看经营结算详情'}</span></div>}
+    {requestedFocus && <div className="settlement-process-guide"><div><strong>{requestedFocus === 'costs' ? '补全成本与利润' : '重新导入并核对数据'}</strong><p>{requestedFocus === 'costs' ? '先补充产品成本，再重新导入该店铺的订单、退款、资金和推广报表，更新这一天的利润。' : '重新导入该店铺覆盖所选日期的完整报表，核对产品利润和每日回款汇总。'}</p></div><div className="heading-actions">{requestedFocus === 'costs' && <Link className="button secondary" to={`/product-costs?${new URLSearchParams({ client: store?.clientId || '', returnTo: `${location.pathname}${location.search}` })}`}>补充产品成本</Link>}<button className="button primary" disabled={!storeId || busy} onClick={() => inputRef.current?.click()}>导入报表</button></div></div>}
     <div className="page-heading"><div><span className="eyebrow">订单回款 + 产品利润</span><h1>甲方经营结算</h1><p>一次导入同时更新各店铺回款与跨店产品利润，导出甲方汇总和每店独立回款明细。</p></div><div className="heading-actions"><button className="button secondary" onClick={clear}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>仅保存计算结果</strong><span>上传文件、订单明细、退款明细和资金流水不会保存或上传到云端。</span></div></section>
     <section className="panel pdd-import"><div><label className="field"><span>选择店铺</span><select value={storeId} onChange={event => { const nextStoreId = event.target.value; setStoreId(nextStoreId); setExportClientId(data.stores.find(item => item.id === nextStoreId)?.clientId || ''); clear() }}><option value="">请选择店铺</option>{activeStores.map(item => <option key={item.id} value={item.id}>{data.clients.find(client => client.id === item.clientId)?.name} · {item.name}</option>)}</select></label><p>一次选择同一店铺的订单、退款、资金和推广费文件；每次导入会同时更新回款明细与产品利润。</p></div><button className="button primary" disabled={busy || !storeId} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
@@ -346,7 +352,9 @@ function calculateSummaries(orders: Order[], refunds: Refund[], funds: Fund[], p
     const shippedCouponRefundByOrder = new Map<string, number>()
     dayFunds.filter(f => shipped.has(f.orderId) && f.category === 'refund' && f.businessCode === '0020005' && f.expense < 0).forEach(f => shippedCouponRefundByOrder.set(f.orderId, (shippedCouponRefundByOrder.get(f.orderId) || 0) + Math.abs(f.expense)))
     const orderShippedRefund = [...shippedRefundByOrder.values()].reduce((n, value) => n + value, 0)
-    const activityShippedRefund = refunds.filter(refund => refund.shop === shop && refund.status === '退款成功' && refund.stage === '已发货' && refund.refundDate === date).reduce((total, refund) => total + refund.refundAmount, 0)
+    const activityRefunds = refunds.filter(refund => refund.shop === shop && refund.status === '退款成功' && refund.stage === '已发货' && refund.refundDate === date)
+    const activityShippedRefund = activityRefunds.reduce((total, refund) => total + refund.refundAmount, 0)
+    const shippedRefundByOrderDate = groupRefundsByOrderDate(activityRefunds, new Map(orders.filter(order => order.shop === shop).map(order => [order.id, order.payDate])))
     const couponRefund = [...shippedCouponRefundByOrder.values()].reduce((n, value) => n + value, 0); const effective = original - orderShippedRefund - couponRefund
     const positive = new Set(dayFunds.filter(f => f.category === 'positive' && f.income > 0).map(f => f.orderId))
     const unsettledAmount = dayOrders.filter(o => eligible.has(o.id) && !positive.has(o.id)).reduce((n, o) => n + Math.max(0, o.receipt - (shippedRefundByOrder.get(o.id) || 0) - (shippedCouponRefundByOrder.get(o.id) || 0)), 0)
@@ -358,7 +366,7 @@ function calculateSummaries(orders: Order[], refunds: Refund[], funds: Fund[], p
     let productCost = 0; let missing = 0
     validOrders.filter(order => !isSupplementOrder(order)).forEach(order => { const match = resolveCost(order); if (!match) missing += 1; else productCost += match.cost * order.quantity })
     const promotionFee = promotions.filter(p => p.shop === shop && p.date === date).reduce((n, p) => n + p.amount, 0); const settled = [...eligible].filter(id => positive.has(id)).length
-    return { shop, date, orderCount: dayOrders.length, originalSales: round(original), effectiveSales: round(effective), shippedRefund: round(activityShippedRefund), orderShippedRefund: round(orderShippedRefund), couponRefund: round(couponRefund), basicServiceFee: round(basicServiceFee), afterSaleCompensation: round(afterSaleCompensation), smallPayment: round(smallPayment), appealReimbursement: round(appealReimbursement), productCost: missing ? null : round(productCost), promotionFee: round(promotionFee), estimatedProfit: missing ? null : round(effective - productCost - promotionFee), currentNet: round(currentNet), unsettledAmount: round(unsettledAmount), profit: missing ? null : round(currentNet - productCost - promotionFee), eligibleOrders: eligible.size, settledOrders: settled, completionRate: eligible.size ? settled / eligible.size : 1, mature: settled === eligible.size, missingCostOrders: missing, unknownFunds: dayFunds.filter(f => f.category === 'unknown').length }
+    return { shop, date, shippedRefundByOrderDate, orderCount: dayOrders.length, originalSales: round(original), effectiveSales: round(effective), shippedRefund: round(activityShippedRefund), orderShippedRefund: round(orderShippedRefund), couponRefund: round(couponRefund), basicServiceFee: round(basicServiceFee), afterSaleCompensation: round(afterSaleCompensation), smallPayment: round(smallPayment), appealReimbursement: round(appealReimbursement), productCost: missing ? null : round(productCost), promotionFee: round(promotionFee), estimatedProfit: missing ? null : round(effective - productCost - promotionFee), currentNet: round(currentNet), unsettledAmount: round(unsettledAmount), profit: missing ? null : round(currentNet - productCost - promotionFee), eligibleOrders: eligible.size, settledOrders: settled, completionRate: eligible.size ? settled / eligible.size : 1, mature: settled === eligible.size, missingCostOrders: missing, unknownFunds: dayFunds.filter(f => f.category === 'unknown').length }
   })
 }
 

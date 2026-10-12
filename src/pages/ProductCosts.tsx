@@ -1,5 +1,6 @@
 import { Calculator, Download, FileSpreadsheet, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react'
 import { useMemo, useState, type ChangeEvent } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Field, Input, Select } from '../components/Fields'
 import { Modal } from '../components/Overlay'
 import { createId, useWorkbench } from '../store/workbench'
@@ -18,7 +19,9 @@ type PreviewRow = CostImportRow & {
 
 export function ProductCosts() {
   const { data, update } = useWorkbench()
-  const [clientId, setClientId] = useState('')
+  const [params] = useSearchParams()
+  const returnTo = params.get('returnTo') || ''
+  const [clientId, setClientId] = useState(params.get('client') || '')
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<ProductCost | null>(null)
   const [batchOpen, setBatchOpen] = useState(false)
@@ -172,6 +175,7 @@ export function ProductCosts() {
   }
 
   return <div className="page">
+    {returnTo.startsWith('/profit-preview?') && <div className="settlement-detail-context"><Link className="text-button" to={returnTo}>← 返回经营结算</Link><span>补充成本后，请重新导入报表更新经营结算。</span></div>}
     <div className="page-heading"><div><span className="eyebrow">成本资料库</span><h1>产品成本</h1><p>成本归属产品，并自动继承产品所属甲方。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setBatchOpen(true)}><Upload size={17} />批量上传成本</button><button className="button primary" onClick={() => setEditing(emptyCost(data.products[0]?.id))}><Plus size={17} />新增成本</button></div></div>
     <section className="filter-bar cost-filter">
       <div className="filter-title"><Calculator size={17} /><span>SKU 成本</span></div>
