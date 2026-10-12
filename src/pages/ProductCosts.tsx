@@ -176,7 +176,7 @@ export function ProductCosts() {
 
   return <div className="page">
     {returnTo.startsWith('/profit-preview?') && <div className="settlement-detail-context"><Link className="text-button" to={returnTo}>← 返回经营结算</Link><span>补充成本后，请重新导入报表更新经营结算。</span></div>}
-    <div className="page-heading"><div><span className="eyebrow">成本资料库</span><h1>产品成本</h1><p>成本归属产品，并自动继承产品所属甲方。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setBatchOpen(true)}><Upload size={17} />批量上传成本</button><button className="button primary" onClick={() => setEditing(emptyCost(data.products[0]?.id))}><Plus size={17} />新增成本</button></div></div>
+    <div className="page-heading"><div><span className="eyebrow">成本资料库</span><h1>产品成本</h1><p>成本归属产品，并自动继承产品所属甲方。结算订单的成本在首次导入时锁定，修改只影响后续新导入的订单。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setBatchOpen(true)}><Upload size={17} />批量上传成本</button><button className="button primary" onClick={() => setEditing(emptyCost(data.products[0]?.id))}><Plus size={17} />新增成本</button></div></div>
     <section className="filter-bar cost-filter">
       <div className="filter-title"><Calculator size={17} /><span>SKU 成本</span></div>
       <Select aria-label="甲方筛选" value={clientId} onChange={event => setClientId(event.target.value)}><option value="">全部甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select>

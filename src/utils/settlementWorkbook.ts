@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx-js-style'
 import type { CollectionRecord, ProfitRecord, Store, WorkbenchData } from '../types/models'
+import { normalizeCollectionRefunds } from './collectionRefunds'
 
 type CellValue = string | number | Date | null
 type CollectionTotal = Omit<CollectionRecord, 'id' | 'storeId' | 'date' | 'updatedAt'> & { date: string }
@@ -111,7 +112,7 @@ function aggregateProfitRows(rows: ProfitRecord[]) {
 export function settlementExportValidation(data: WorkbenchData, options: SettlementExportOptions): SettlementExportValidation {
   const stores = data.stores.filter(store => store.clientId === options.clientId && store.storeStatus !== '暂停')
   const storeIds = new Set(stores.map(store => store.id))
-  const collection = data.collectionRecords.filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
+  const collection = normalizeCollectionRefunds(data.collectionRecords).filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
   const profits = data.profitRecords.filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
   const blocking: string[] = []
   const warnings: string[] = []
@@ -119,8 +120,8 @@ export function settlementExportValidation(data: WorkbenchData, options: Settlem
   const missingCost = collection.reduce((total, row) => total + Number(row.missingCostOrders || 0), 0)
   if (missingCost) blocking.push(`还有 ${missingCost} 个订单未匹配成本，无法准确计算利润`)
   stores.forEach(store => {
-    const count = collection.filter(row => row.storeId === store.id && row.refundBasis !== 'refund_completed_at').length
-    if (count) warnings.push(`${store.name}：${count} 天仍是旧版售后口径`)
+    const count = collection.filter(row => row.storeId === store.id && row.refundBasis !== 'order_paid_at').length
+    if (count) warnings.push(`${store.name}：${count} 天的退款口径未确认，请重新导入对应历史订单和退款报表`)
   })
   const profitByStoreDate = new Map<string, ProfitRecord[]>()
   profits.forEach(row => profitByStoreDate.set(`${row.storeId}|${row.date}`, [...(profitByStoreDate.get(`${row.storeId}|${row.date}`) || []), row]))
@@ -178,7 +179,7 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
   const client = data.clients.find(item => item.id === clientId)
   setCell(sheet, 1, 0, `${client?.name || '甲方'}经营结算表`, titleStyle())
   setCell(sheet, 2, 0, `${startDate} 至 ${endDate}｜上方按店铺独立对账，下方按标准产品跨店铺合并｜数据截至本次导出时点`, noteStyle)
-  const storeHeaders = ['店铺', '有效销售额', '货品成本', '推广费', '运营费', '预估利润', '本期发生\n已发货退款', '已发货退款率', '订单净回款', '未回款金额', '订单回款完成率', '状态']
+  const storeHeaders = ['店铺', '有效销售额', '货品成本', '推广费', '运营费', '预估利润', '本期订单\n已发货退款', '已发货退款率', '订单净回款', '未回款金额', '订单回款完成率', '状态']
   storeHeaders.forEach((label, column) => setCell(sheet, 4, column, label, headerStyle))
   const storeRows = stores.map(store => {
     const collectionRows = collections.filter(row => row.storeId === store.id)
@@ -204,7 +205,7 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
   totalValues.forEach((value, column) => setCell(sheet, row, column, value, { ...(column === 7 || column === 10 ? percentStyle : column >= 1 && column <= 9 ? moneyStyle : bodyStyle), font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: colors.text } }, fill: { patternType: 'solid', fgColor: { rgb: 'EDF2FF' } } }))
   row += 2
   setCell(sheet, row, 0, '说明', { ...bodyStyle, font: { name: 'Microsoft YaHei', sz: 9, bold: true, color: { rgb: colors.text } } })
-  setCell(sheet, row, 1, '“本期发生已发货退款”按退款完成时间统计，包含历史订单退款；有效销售额和退款率仍按本期订单口径计算。', noteStyle)
+  setCell(sheet, row, 1, '已发货退款按原订单成交日期回填；本期订单后续发生的退款计入本期，有效销售额和退款率使用同一订单口径。', noteStyle)
   row += 2
   setCell(sheet, row, 0, '产品利润汇总', titleStyle(12))
   row += 1
@@ -283,7 +284,7 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
 function buildDetailSheet(store: Store, rows: CollectionRecord[], startDate: string, endDate: string) {
   const sheet = XLSX.utils.aoa_to_sheet([])
   setCell(sheet, 1, 0, `${store.name}订单回款明细`, titleStyle())
-  setCell(sheet, 2, 0, `本页只统计“${store.name}”。已发货退款按本期退款完成时间统计，包含历史订单退款；有效订单销售额仍按本期订单口径。`, noteStyle)
+  setCell(sheet, 2, 0, `本页只统计“${store.name}”。退款按原订单成交日期回填，有效订单销售额和利润随退款更新；推广费按消耗日期归属。`, noteStyle)
   const headers = ['店铺名称', '成交日期', '订单数', '订单成交额', '已发货退款', '优惠券退款', '有效订单销售额', '基础技术服务费', '售后补偿消费者', '小额打款', '申诉补回', '商品成本', '推广费', '预估盈亏', '订单净回款', '未回款金额', '当前盈亏']
   headers.forEach((label, column) => setCell(sheet, 5, column, label, detailHeaderStyle))
   const total = combineCollections(rows)
@@ -317,7 +318,7 @@ export function createSettlementWorkbook(data: WorkbenchData, options: Settlemen
   if (!client) throw new Error('找不到所选甲方')
   const stores = data.stores.filter(store => store.clientId === options.clientId && store.storeStatus !== '暂停')
   const storeIds = new Set(stores.map(store => store.id))
-  const collections = data.collectionRecords.filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
+  const collections = normalizeCollectionRefunds(data.collectionRecords).filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
   const profits = data.profitRecords.filter(row => storeIds.has(row.storeId) && inRange(row.date, options.startDate, options.endDate))
   const dates = collections.map(row => row.date).sort()
   const startDate = options.startDate || dates[0] || '最早'

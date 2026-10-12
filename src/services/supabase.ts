@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { initialData } from '../data/template'
 import type { WorkbenchData } from '../types/models'
+import { normalizeCollectionRefunds } from '../utils/collectionRefunds'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -47,7 +48,7 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   })
   const stores = (value.stores || []).map(store => ({ ...store, storeStatus: store.storeStatus || '启用' as const }))
   const productLinks = (value.productLinks || []).map(link => ({ ...link, status: link.status || '日销' as const }))
-  const collectionRecords = (value.collectionRecords || []).map(record => ({ ...record, orderShippedRefund: Number.isFinite(record.orderShippedRefund) ? record.orderShippedRefund : record.shippedRefund }))
+  const collectionRecords = normalizeCollectionRefunds(value.collectionRecords || [])
   return { ...value, stores, products, productCosts, productLinks, skus, skuHistory: value.skuHistory || [], todos: value.todos || [], profitRecords: value.profitRecords || [], collectionRecords }
 }
 
