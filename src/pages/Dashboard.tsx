@@ -33,7 +33,7 @@ export function Dashboard() {
   }
 
   return <div className="page">
-    <div className="page-heading"><div><span className="eyebrow">经营数据视图</span><h1>总览</h1><p>快速查看店铺销售额、提点、甲方盈利和已发货退款。</p></div><div className="today">{new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date())}</div></div>
+    <div className="page-heading"><div><span className="eyebrow">经营数据视图</span><h1>总览</h1><p>快速查看店铺销售额、运营费用、甲方盈利和已发货退款。</p></div><div className="today">{new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date())}</div></div>
     <section className="metrics">{metrics.map(([label, value, Icon, tone]) => <article key={label} className="metric"><div className={`metric-icon ${tone}`}><Icon size={18} /></div><div><span>{label}</span><strong>{value}</strong></div></article>)}</section>
     <StorePerformance />
     <section className="panel todo-panel"><div className="panel-heading todo-heading"><div><h2>重要待办</h2><p>记录今天或指定日期需要处理的甲方、店铺事项</p></div><label className="todo-date"><CalendarDays size={15} /><input type="date" value={todoDate} onChange={e => setTodoDate(e.target.value)} /></label></div>
