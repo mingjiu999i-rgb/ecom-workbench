@@ -1,6 +1,7 @@
 import JSZip from 'jszip'
 import { ChevronDown, ChevronRight, Download, FileSpreadsheet, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import * as XLSX from '@e965/xlsx'
 import { Modal } from '../components/Overlay'
 import { useWorkbench } from '../store/workbench'
@@ -94,11 +95,18 @@ const promotionColumns = (headers: Set<string>) => {
 
 export function PddAnalyzer() {
   const { data, update, syncStatus } = useWorkbench()
+  const [searchParams] = useSearchParams()
+  const requestedStoreId = searchParams.get('store') || ''
+  const requestedStore = data.stores.find(item => item.id === requestedStoreId)
+  const requestedStart = searchParams.get('start') || ''
+  const requestedEnd = searchParams.get('end') || ''
+  const showSavedDetail = searchParams.get('detail') === 'saved'
+  const savedDetailRef = useRef<HTMLElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const [storeId, setStoreId] = useState('')
-  const [exportClientId, setExportClientId] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [storeId, setStoreId] = useState(requestedStore?.id || '')
+  const [exportClientId, setExportClientId] = useState(requestedStore?.clientId || '')
+  const [startDate, setStartDate] = useState(requestedStart)
+  const [endDate, setEndDate] = useState(requestedEnd)
   const [orders, setOrders] = useState<Map<string, Order>>(new Map())
   const [refunds, setRefunds] = useState<Map<string, Refund>>(new Map())
   const [funds, setFunds] = useState<Map<string, Fund>>(new Map())
@@ -111,7 +119,7 @@ export function PddAnalyzer() {
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set())
   const store = data.stores.find(item => item.id === storeId)
   const shop = store?.name || ''
-  const activeStores = data.stores.filter(item => item.storeStatus !== '暂停')
+  const activeStores = data.stores.filter(item => item.storeStatus !== '暂停' || item.id === storeId)
 
   const importTable = (name: string, table: unknown[][], targetShop: string) => {
     const headerIndex = table.slice(0, 30).findIndex(row => {
@@ -250,6 +258,19 @@ export function PddAnalyzer() {
   }, [storeId, savedMonthSignature])
 
   const clear = () => { setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCostIds(new Map()); setMessages([]); setError('') }
+  useEffect(() => {
+    setStoreId(requestedStore?.id || '')
+    setExportClientId(requestedStore?.clientId || '')
+    setStartDate(requestedStart)
+    setEndDate(requestedEnd)
+    clear()
+  }, [requestedStore?.id, requestedStore?.clientId, requestedStart, requestedEnd])
+
+  useEffect(() => {
+    if (!showSavedDetail || !storeId) return
+    const frame = window.requestAnimationFrame(() => savedDetailRef.current?.scrollIntoView({ block: 'start' }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [showSavedDetail, storeId, startDate, endDate])
   const exportResult = () => {
     if (!exportClientId) { setError('请先选择要导出的甲方'); return }
     if (exportValidation.blocking.length) { setError(exportValidation.blocking.join('；')); return }
@@ -263,6 +284,7 @@ export function PddAnalyzer() {
   }
 
   return <div className="page page-wide pdd-page">
+    {showSavedDetail && <div className="settlement-detail-context"><Link className="text-button" to="/">← 返回总览</Link><span>{store ? `${store.name} · ${startDate || '全部日期'}${endDate && startDate !== endDate ? ` 至 ${endDate}` : ''}` : '请选择店铺查看经营结算详情'}</span></div>}
     <div className="page-heading"><div><span className="eyebrow">订单回款 + 产品利润</span><h1>甲方经营结算</h1><p>一次导入同时更新各店铺回款与跨店产品利润，导出甲方汇总和每店独立回款明细。</p></div><div className="heading-actions"><button className="button secondary" onClick={clear}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>仅保存计算结果</strong><span>上传文件、订单明细、退款明细和资金流水不会保存或上传到云端。</span></div></section>
     <section className="panel pdd-import"><div><label className="field"><span>选择店铺</span><select value={storeId} onChange={event => { const nextStoreId = event.target.value; setStoreId(nextStoreId); setExportClientId(data.stores.find(item => item.id === nextStoreId)?.clientId || ''); clear() }}><option value="">请选择店铺</option>{activeStores.map(item => <option key={item.id} value={item.id}>{data.clients.find(client => client.id === item.clientId)?.name} · {item.name}</option>)}</select></label><p>一次选择同一店铺的订单、退款、资金和推广费文件；每次导入会同时更新回款明细与产品利润。</p></div><button className="button primary" disabled={busy || !storeId} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
@@ -276,7 +298,9 @@ export function PddAnalyzer() {
     {total ? <><section className="pdd-metrics">{[['有效订单销售额', money(total.effectiveSales)], ['订单净回款', money(total.currentNet)], ['未回款金额', money(total.unsettledAmount)], ['推广费', money(total.promotionFee)], ['当前盈亏', money(total.profit)]].map(([label, value]) => <article className="metric" key={label}><div><span>{label}</span><strong>{value}</strong></div></article>)}</section>
       <section className="panel table-panel"><div className="table-caption"><div><strong>每日经营主表</strong><span>“已发货退款”按退款完成日期统计并包含历史订单；有效订单销售额仍按本期订单口径。基础技术服务费只统计扣除部分。</span></div></div><div className="table-scroll"><table><thead><tr>{['成交日期','订单数','订单成交额','已发货退款','优惠券退款','有效订单销售额','基础技术服务费','售后补偿消费者','小额打款','申诉补回','商品成本','推广费','预估盈亏','订单净回款','未回款金额','当前盈亏','入账状态'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{[total, ...summaries].map((s, index) => <tr key={`${s.date}-${index}`}><td className="cell-main">{index === 0 ? `累计：${s.date}` : s.date}</td><td>{s.orderCount}</td><td>{money(s.originalSales)}</td><td>{money(s.shippedRefund)}</td><td>{money(s.couponRefund)}</td><td>{money(s.effectiveSales)}</td><td>{money(s.basicServiceFee)}</td><td>{money(s.afterSaleCompensation)}</td><td>{money(s.smallPayment)}</td><td>{money(s.appealReimbursement)}</td><td>{money(s.productCost)}</td><td>{money(s.promotionFee)}</td><td>{money(s.estimatedProfit)}</td><td>{money(s.currentNet)}</td><td>{money(s.unsettledAmount)}</td><td className={s.profit != null && s.profit < 0 ? 'negative' : 'positive'}>{money(s.profit)}</td><td><span className={`status ${s.mature ? 'normal' : 'risk'}`}><i />{s.mature ? '已完成' : '未完成'}</span></td></tr>)}</tbody></table></div></section>
     </> : <section className="panel pdd-empty"><FileSpreadsheet size={28} /><strong>尚未导入报表</strong><span>选择店铺后，一次选择该店铺的全部报表。</span></section>}
-    {savedTotal && <section className="panel table-panel saved-profit-panel">
+    {showSavedDetail && storeId && !savedTotal && <section ref={savedDetailRef} className="panel performance-empty saved-profit-panel">{shop}在所选日期范围内暂无已保存的经营结算数据，可调整日期或导入报表。</section>}
+    {savedTotal && <section ref={savedDetailRef} className="panel table-panel saved-profit-panel">
+
       <div className="table-caption"><div><strong>云端每日订单回款</strong><span>仅保存每日计算汇总；当前日期筛选会同步应用到导出结果。</span></div><div className="cost-count">云端状态：<b>{syncStatus === 'saving' ? '保存中…' : syncStatus === 'error' ? '保存失败' : '已保存'}</b> · <b>{filteredRecords.length}</b> 条记录</div></div>
       <div className="table-scroll"><table>
         <thead><tr>{['成交日期','订单数','订单成交额','已发货退款','优惠券退款','有效订单销售额','基础技术服务费','售后补偿消费者','小额打款','申诉补回','商品成本','推广费','预估盈亏','订单净回款','未回款金额','当前盈亏','入账状态'].map(header => <th key={header}>{header}</th>)}</tr></thead>
