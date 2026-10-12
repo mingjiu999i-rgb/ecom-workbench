@@ -18,6 +18,7 @@ export function groupRefundsByOrderDate(refunds: { orderId: string; refundAmount
 export function refundSources(rows: CollectionRecord[], start: string, end: string) {
   let current = 0, historical = 0, unknown = 0
   rows.forEach(row => {
+    if (row.refundBasis === 'order_paid_at') { current += value(row.shippedRefund); return }
     if (!row.shippedRefundByOrderDate || row.refundBasis !== 'refund_completed_at') { unknown += value(row.shippedRefund); return }
     let classified = 0
     Object.entries(row.shippedRefundByOrderDate).forEach(([date, amount]) => {
@@ -62,7 +63,7 @@ export function summarizePerformance(data: WorkbenchData, start: string, end: st
     shippedRefund: collections.length ? sum(collections, row => row.shippedRefund) : null,
     originalSales, orderRefund, refundRate: rateAvailable ? orderRefund / originalSales : null,
     refundSources: refundSources(collections, start, end),
-    legacyRefund: collections.some(row => row.refundBasis !== 'refund_completed_at'),
+    legacyRefund: collections.some(row => row.refundBasis !== 'order_paid_at'),
     currentNet: collections.length ? sum(collections, row => row.currentNet) : null,
     unsettledAmount: collections.length ? sum(collections, row => row.unsettledAmount) : null,
     difference: hasData ? roundMoney(value(profit) - (value(sales) - value(cost) - value(promotion) - value(operationFee))) : 0,

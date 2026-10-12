@@ -41,7 +41,7 @@ export interface ProfitRecord {
 }
 export interface CollectionRecord {
   id: string; storeId: string; date: string; orderCount: number
-  originalSales: number; effectiveSales: number; shippedRefund: number; orderShippedRefund?: number; refundBasis?: 'refund_completed_at'; couponRefund: number
+  originalSales: number; effectiveSales: number; shippedRefund: number; orderShippedRefund?: number; refundBasis?: 'refund_completed_at' | 'order_paid_at'; couponRefund: number
   shippedRefundByOrderDate?: Record<string, number>
   basicServiceFee: number; afterSaleCompensation: number; smallPayment: number; appealReimbursement: number
   productCost: number | null; promotionFee: number; estimatedProfit: number | null
@@ -49,8 +49,17 @@ export interface CollectionRecord {
   eligibleOrders: number; settledOrders: number; completionRate: number; mature: boolean
   missingCostOrders: number; unknownFunds: number; updatedAt: string
 }
+export interface OrderAccountingLedger {
+  storeId: string
+  initializedDates: string[]
+  orders: Array<{ id: string; date: string; receipt: number; cancelled: boolean; quantity: number; productId: string; unitCost: number | null; supplement: boolean }>
+  refunds: Array<{ id: string; orderId: string; success: boolean; stage: string; amount: number }>
+  funds: Array<{ key: string; orderId: string; income: number; expense: number; businessCode: string; category: 'positive' | 'refund' | 'other' | 'transfer' | 'promotion' | 'unknown' }>
+  promotions: Array<{ date: string; amount: number }>
+}
 export interface WorkbenchData {
   clients: Client[]; stores: Store[]; products: Product[]; productLinks: ProductLink[]
   skus: Sku[]; productCosts: ProductCost[]; operations: Operation[]; skuHistory: SkuHistory[]; todos: TodoItem[]
   profitRecords: ProfitRecord[]; collectionRecords: CollectionRecord[]
+  orderAccountingLedgers?: OrderAccountingLedger[]
 }
