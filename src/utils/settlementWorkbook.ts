@@ -178,7 +178,7 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
   const sheet = XLSX.utils.aoa_to_sheet([])
   const client = data.clients.find(item => item.id === clientId)
   setCell(sheet, 1, 0, `${client?.name || '甲方'}经营结算表`, titleStyle())
-  setCell(sheet, 2, 0, `${startDate} 至 ${endDate}｜上方按店铺独立对账，下方按标准产品跨店铺合并｜数据截至本次导出时点`, noteStyle)
+  setCell(sheet, 2, 0, `${startDate} 至 ${endDate}｜本页按店铺独立对账，产品利润见“产品预览”工作表｜数据截至本次导出时点`, noteStyle)
   const storeHeaders = ['店铺', '有效销售额', '货品成本', '推广费', '运营费', '预估利润', '本期订单\n已发货退款', '已发货退款率', '订单净回款', '未回款金额', '订单回款完成率', '状态']
   storeHeaders.forEach((label, column) => setCell(sheet, 4, column, label, headerStyle))
   const storeRows = stores.map(store => {
@@ -206,11 +206,25 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
   row += 2
   setCell(sheet, row, 0, '说明', { ...bodyStyle, font: { name: 'Microsoft YaHei', sz: 9, bold: true, color: { rgb: colors.text } } })
   setCell(sheet, row, 1, '已发货退款按原订单成交日期回填；本期订单后续发生的退款计入本期，有效销售额和退款率使用同一订单口径。', noteStyle)
-  row += 2
-  setCell(sheet, row, 0, '产品利润汇总', titleStyle(12))
-  row += 1
-  setCell(sheet, row, 0, '相同标准产品在不同店铺合并展示；有效销售额已反映本期订单退款。补收差价计入金额，不计销量和成本。', noteStyle)
-  row += 2
+  applyWhiteCanvas(sheet, row, 11)
+  sheet['!merges'] = [
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 11 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 11 } },
+    { s: { r: row, c: 1 }, e: { r: row, c: 11 } },
+  ]
+  sheet['!cols'] = [22, 16, 16, 15, 15, 16, 18, 17, 16, 16, 19, 12].map(wch => ({ wch }))
+  sheet['!rows'] = Array.from({ length: row + 1 }, (_, index) => ({ hpt: index === 4 ? 34 : index === row ? 38 : index === 1 ? 25 : 23 }))
+  sheet['!freeze'] = { xSplit: 1, ySplit: 5, topLeftCell: 'B6', activePane: 'bottomRight', state: 'frozen' }
+  sheet['!sheetViews'] = [{ showGridLines: false }]
+  sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row, c: 11 } })
+  return sheet
+}
+
+function buildProductPreviewSheet(data: WorkbenchData, profits: ProfitRecord[]) {
+  const sheet = XLSX.utils.aoa_to_sheet([])
+  setCell(sheet, 0, 0, '产品利润汇总', titleStyle(12))
+  setCell(sheet, 1, 0, '相同标准产品在不同店铺合并展示；有效销售额已反映本期订单退款。补收差价计入金额，不计销量和成本。', noteStyle)
+  let row = 3
 
   const aggregated = aggregateProfitRows(profits)
   const dates = [...new Set(aggregated.map(item => item.date))].sort()
@@ -262,22 +276,20 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
   })
   if (!productIds.length) setCell(sheet, row, 0, '暂无已同步的产品利润数据', { ...bodyStyle, fill: { patternType: 'solid', fgColor: { rgb: colors.gray } } })
 
-  const lastColumn = Math.max(columns.length + 1, 11)
-  const lastRow = Math.max(row, 10)
+  const lastColumn = Math.max(columns.length + 1, 5)
+  const lastRow = row
   applyWhiteCanvas(sheet, lastRow, lastColumn)
   sheet['!merges'] = [
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 11 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 11 } },
-    { s: { r: storeRows.length + 7, c: 1 }, e: { r: storeRows.length + 7, c: 11 } },
-    { s: { r: storeRows.length + 9, c: 0 }, e: { r: storeRows.length + 9, c: lastColumn } },
-    { s: { r: storeRows.length + 10, c: 0 }, e: { r: storeRows.length + 10, c: lastColumn } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
+    ...(!productIds.length ? [{ s: { r: row, c: 0 }, e: { r: row, c: lastColumn } }] : []),
     ...(sheet['!merges'] || []),
   ]
-  sheet['!cols'] = [{ wch: 19 }, { wch: 18 }, ...columns.map(column => ({ wch: column.type === 'month' ? 15 : 11 }))]
-  sheet['!rows'] = Array.from({ length: Math.max(row + 1, 12) }, (_, index) => ({ hpt: index === 4 ? 34 : index === 1 ? 25 : 23 }))
-  sheet['!freeze'] = { xSplit: 2, ySplit: 5, topLeftCell: 'C6', activePane: 'bottomRight', state: 'frozen' }
+  sheet['!cols'] = [{ wch: 19 }, { wch: 18 }, ...Array.from({ length: lastColumn - 1 }, (_, index) => ({ wch: columns[index]?.type === 'month' ? 15 : 11 }))]
+  sheet['!rows'] = Array.from({ length: row + 1 }, (_, index) => ({ hpt: index === 0 ? 25 : index === 1 ? 38 : 23 }))
+  sheet['!freeze'] = { xSplit: 2, ySplit: 4, topLeftCell: 'C5', activePane: 'bottomRight', state: 'frozen' }
   sheet['!sheetViews'] = [{ showGridLines: false }]
-  sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 1, c: 0 }, e: { r: lastRow, c: lastColumn } })
+  sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow, c: lastColumn } })
   return sheet
 }
 
@@ -324,8 +336,9 @@ export function createSettlementWorkbook(data: WorkbenchData, options: Settlemen
   const startDate = options.startDate || dates[0] || '最早'
   const endDate = options.endDate || dates[dates.length - 1] || '最新'
   const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, buildSummarySheet(data, options.clientId, stores, collections, profits, startDate, endDate), '甲方汇总')
-  const used = new Set(['甲方汇总'])
+  XLSX.utils.book_append_sheet(workbook, buildSummarySheet(data, options.clientId, stores, collections, profits, startDate, endDate), '总览')
+  XLSX.utils.book_append_sheet(workbook, buildProductPreviewSheet(data, profits), '产品预览')
+  const used = new Set(workbook.SheetNames)
   stores.forEach(store => XLSX.utils.book_append_sheet(workbook, buildDetailSheet(store, collections.filter(row => row.storeId === store.id), startDate, endDate), safeSheetName(`${store.name}回款`, used)))
   workbook.Workbook = workbook.Workbook || {}
   ;(workbook.Workbook as unknown as { CalcPr: { calcMode: string; fullCalcOnLoad: boolean; forceFullCalc: boolean } }).CalcPr = { calcMode: 'auto', fullCalcOnLoad: true, forceFullCalc: true }

@@ -140,7 +140,39 @@ test('settlement workbook uses the same order-date refund in filtered summary an
   const workbook = createSettlementWorkbook(data, { clientId: 'client', startDate: '2026-10-01', endDate: '2026-10-01' })
   assert.equal(workbook.Sheets['店铺回款'].E8.v, 30)
   assert.equal(workbook.Sheets['店铺回款'].M8.v, 20)
-  assert.equal(workbook.Sheets['甲方汇总'].G7.v, 30)
+  assert.equal(workbook.Sheets['总览'].G7.v, 30)
+})
+
+test('all clients export separate overview, product preview and store details with cross-store monthly totals', () => {
+  const first = initial()
+  const baseProfit = profitRecords(first)[0]
+  const data = {
+    clients: [{ id: 'client', name: '甲方一' }, { id: 'other', name: '甲方二' }],
+    stores: [
+      { id: 'store', clientId: 'client', name: '店铺', storeStatus: '启用' },
+      { id: 'second', clientId: 'client', name: '第二店铺', storeStatus: '启用' },
+      { id: 'other', clientId: 'other', name: '另一甲方店', storeStatus: '启用' },
+    ], products,
+    collectionRecords: [...records(first), { ...records(first)[0], id: 'second', storeId: 'second' }, { ...records(first)[0], id: 'other', storeId: 'other' }],
+    profitRecords: [baseProfit, { ...baseProfit, id: 'second', storeId: 'second' }, { ...baseProfit, id: 'other', storeId: 'other' }],
+  }
+  const workbook = createSettlementWorkbook(data, { clientId: 'client' })
+  assert.deepEqual(workbook.SheetNames, ['总览', '产品预览', '店铺回款', '第二店铺回款'])
+  const preview = workbook.Sheets['产品预览']
+  assert.equal(preview.A1.v, '产品利润汇总')
+  assert.equal(preview.C4.v, '10月1日')
+  assert.equal(preview.D4.v, '10月份数据')
+  assert.equal(preview.C5.v, 200)
+  assert.equal(preview.D5.v, 200)
+  assert.equal(preview.D10.v, baseProfit.estimatedProfit * 2)
+  assert.equal(preview.D12.v, baseProfit.estimatedProfit / baseProfit.amount)
+  assert.equal(workbook.Sheets['总览']['!ref'], 'A1:L10')
+  assert(!Object.values(workbook.Sheets['总览']).some(cell => cell?.v === '产品利润汇总'))
+  const other = createSettlementWorkbook(data, { clientId: 'other' })
+  assert.deepEqual(other.SheetNames, ['总览', '产品预览', '另一甲方店回款'])
+  assert.equal(other.Sheets['产品预览'].C5.v, 100)
+  const empty = createSettlementWorkbook({ ...data, profitRecords: [] }, { clientId: 'client' })
+  assert.equal(empty.Sheets['产品预览'].A4.v, '暂无已同步的产品利润数据')
 })
 
 test('fingerprints are stable and do not retain raw remarks', () => {
