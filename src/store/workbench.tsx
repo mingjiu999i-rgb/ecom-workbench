@@ -4,6 +4,8 @@ import type { Session } from '@supabase/supabase-js'
 import { isSupabaseConfigured, loadWorkbench, saveWorkbench, supabase } from '../services/supabase'
 import type { WorkbenchData } from '../types/models'
 import { isActiveProductLink } from '../utils/selectors'
+import { readWorkbenchDraft, removeWorkbenchDraft, writeWorkbenchDraft } from '../services/workbenchDrafts'
+import { createWorkbenchSync, describeSyncError, type PendingDraft, type SyncState } from '../utils/workbenchSync'
 
 type SyncStatus = 'saved' | 'saving' | 'error'
 interface WorkbenchContextValue {
@@ -12,6 +14,10 @@ interface WorkbenchContextValue {
   userEmail: string
   signOut: () => Promise<void>
   syncStatus: SyncStatus
+  syncError: string
+  syncErrorDetail: string
+  backupError: string
+  retrySync: () => void
 }
 
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null)
@@ -21,8 +27,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
   const [data, setData] = useState<WorkbenchData | null>(null)
   const [loadError, setLoadError] = useState('')
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>('saved')
-  const saveQueue = useRef<Promise<void>>(Promise.resolve())
+  const [syncState, setSyncState] = useState<SyncState>({ status: 'saved', error: null, backupError: '' })
+  const [recovery, setRecovery] = useState<PendingDraft<WorkbenchData> | null>(null)
+  const dataRef = useRef<WorkbenchData | null>(null)
+  const syncRef = useRef<ReturnType<typeof createWorkbenchSync<WorkbenchData>> | null>(null)
+  const userId = session?.user.id
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data: result }) => setSession(result.session))
@@ -31,28 +40,56 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!session) { setData(null); return }
+    if (!userId) { dataRef.current = null; setData(null); setRecovery(null); return }
     let active = true
+    dataRef.current = null
+    setData(null)
+    setRecovery(null)
     setLoadError('')
-    void loadWorkbench(session.user.id)
-      .then(result => { if (active) setData(result) })
-      .catch(error => { if (active) setLoadError(error instanceof Error ? error.message : '云端数据加载失败') })
-    return () => { active = false }
-  }, [session])
+    setSyncState({ status: 'saved', error: null, backupError: '' })
+    const manager = createWorkbenchSync<WorkbenchData>({
+      userId, save: (value, signal) => saveWorkbench(userId, value, signal),
+      storage: { write: writeWorkbenchDraft, remove: removeWorkbenchDraft },
+      notify: state => { if (active) setSyncState(state) },
+    })
+    syncRef.current = manager
+    const load = async () => {
+      const [cloud, draft] = await Promise.allSettled([loadWorkbench(userId), readWorkbenchDraft(userId)])
+      if (!active) return
+      const local = draft.status === 'fulfilled' ? draft.value : null
+      if (cloud.status === 'fulfilled') {
+        dataRef.current = cloud.value
+        setData(cloud.value)
+        if (local && JSON.stringify(local.data) !== JSON.stringify(cloud.value)) setRecovery(local)
+        else if (local) void removeWorkbenchDraft(userId, local.id).catch(() => {})
+      } else {
+        if (local) setRecovery(local)
+        setLoadError(describeSyncError(cloud.reason).message)
+      }
+    }
+    void load()
+    const online = () => manager.retry()
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (manager.hasPending()) { event.preventDefault(); event.returnValue = '' } }
+    window.addEventListener('online', online)
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => {
+      active = false
+      manager.dispose()
+      if (syncRef.current === manager) syncRef.current = null
+      window.removeEventListener('online', online)
+      window.removeEventListener('beforeunload', beforeUnload)
+    }
+  }, [userId])
 
   const update = useCallback((recipe: (current: WorkbenchData) => WorkbenchData) => {
-    if (!session) return
-    setData(current => {
-      if (!current) return current
-      const next = recipe(current)
-      setSyncStatus('saving')
-      saveQueue.current = saveQueue.current
-        .then(() => saveWorkbench(session.user.id, next))
-        .then(() => setSyncStatus('saved'))
-        .catch(error => { console.error(error); setSyncStatus('error') })
-      return next
-    })
-  }, [session])
+    const current = dataRef.current
+    if (!current || !syncRef.current) return
+    const next = recipe(current)
+    if (next === current) return
+    dataRef.current = next
+    setData(next)
+    syncRef.current.enqueue(next)
+  }, [])
 
   useEffect(() => {
     if (!data) return
@@ -77,6 +114,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured) return <SetupRequired />
   if (session === undefined) return <FullScreenLoading label="正在连接云端…" />
   if (!session) return <AuthScreen />
+  if (recovery) return <div className="state-page"><Cloud size={30} /><strong>发现本机尚未同步的修改</strong><span>{new Date(recovery.updatedAt).toLocaleString('zh-CN')} 保存的本机备份与云端版本不同。请选择要保留的版本，恢复前不会覆盖云端。</span><div className="draft-recovery-actions"><button className="button primary" onClick={() => { const value = recovery.data; dataRef.current = value; setData(value); setLoadError(''); setRecovery(null); syncRef.current?.enqueue(value) }}>恢复本机修改并同步</button><button className="button secondary" onClick={() => downloadWorkbenchBackup(recovery.data)}>导出本机备份</button>{data && <button className="button secondary" onClick={() => { void removeWorkbenchDraft(recovery.userId, recovery.id).catch(() => {}); setRecovery(null) }}>保留云端版本</button>}</div></div>
   if (loadError) return <StateScreen title="无法读取云端数据" message={loadError} action="重新加载" onAction={() => window.location.reload()} />
   if (!data) return <FullScreenLoading label="正在同步工作台数据…" />
 
@@ -85,9 +123,22 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     update,
     userEmail: session.user.email || '已登录',
     signOut: async () => { await supabase.auth.signOut() },
-    syncStatus,
+    syncStatus: syncState.status,
+    syncError: syncState.error?.message || '',
+    syncErrorDetail: syncState.error?.detail || '',
+    backupError: syncState.backupError,
+    retrySync: () => syncRef.current?.retry(),
   }
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>
+}
+
+export function downloadWorkbenchBackup(value: WorkbenchData) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(value)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `运营工作台未同步备份-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function AuthScreen() {

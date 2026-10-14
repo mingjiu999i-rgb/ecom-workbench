@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
 import { OverviewRefundTracker } from './OverviewRefundActivity'
+import { SyncNotice } from './SyncNotice'
 
 const items = [
   { to: '/', label: '总览', icon: LayoutDashboard },
@@ -28,6 +29,6 @@ export function Layout() {
       <nav aria-label="主导航"><span className="nav-section-label">工作空间</span>{items.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setOpen(false)}><Icon size={18} strokeWidth={1.8} /><span>{label}</span></NavLink>)}</nav>
       <div className="account-card"><div className={`sync-line sync-${syncStatus}`}>{syncStatus === 'saved' ? <Check size={13} /> : syncStatus === 'saving' ? <Cloud size={13} /> : <CloudAlert size={13} />}<span>{syncStatus === 'saved' ? '云端已同步' : syncStatus === 'saving' ? '正在保存…' : '同步失败'}</span></div><div className="account-email" title={userEmail}>{userEmail}</div><button onClick={() => void signOut()}><LogOut size={14} />退出登录</button></div>
     </aside>
-    <main className="main"><header className="workspace-bar"><div className="workspace-breadcrumb"><span>工作空间</span><ChevronRight size={14} /><strong>{currentPage}</strong></div><div className="workspace-cloud"><Cloud size={15} /><span>云端工作台</span></div></header><Outlet /></main>
+    <main className="main"><header className="workspace-bar"><div className="workspace-breadcrumb"><span>工作空间</span><ChevronRight size={14} /><strong>{currentPage}</strong></div><div className="workspace-cloud"><Cloud size={15} /><span>云端工作台</span></div></header><SyncNotice /><Outlet /></main>
   </div>
 }

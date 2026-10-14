@@ -61,7 +61,8 @@ export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
   return initial
 }
 
-export async function saveWorkbench(userId: string, data: WorkbenchData): Promise<void> {
-  const { error } = await supabase.from('workbench_documents').upsert({ user_id: userId, data, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
+  const request = supabase.from('workbench_documents').upsert({ user_id: userId, data, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+  const { error } = await (signal ? request.abortSignal(signal) : request)
   if (error) throw error
 }
