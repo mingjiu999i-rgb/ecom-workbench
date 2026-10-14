@@ -2,6 +2,7 @@ import { BarChart3, Box, Boxes, Calculator, Check, ChevronRight, ClipboardList, 
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
+import { OverviewRefundTracker } from './OverviewRefundActivity'
 
 const items = [
   { to: '/', label: '总览', icon: LayoutDashboard },
@@ -18,6 +19,7 @@ export function Layout() {
   const { pathname } = useLocation()
   const currentPage = items.find(item => item.to === pathname)?.label || '总览'
   return <div className="app-shell">
+    <OverviewRefundTracker />
     <button className="mobile-menu" onClick={() => setOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
     {open && <button className="nav-backdrop" onClick={() => setOpen(false)} aria-label="关闭导航" />}
     <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>

@@ -1,0 +1,11 @@
+.overview-refund-metric > div:last-child { min-width: 0; }
+.overview-refund-metric .metric-amount small { line-height: 1.6; }
+.overview-refund-detail > p { color: #718096; font-size: 12px; line-height: 1.85; }
+.overview-refund-detail .profit-breakdown > div:first-child { font-weight: 650; color: #263754; }
+.overview-refund-detail .profit-breakdown > div:last-child { font-weight: 400; color: #475569; }
+.overview-refund-notice { padding: 12px 14px; margin-bottom: 18px; border: 1px solid #e5eaf3; border-radius: 9px; color: #66758c; background: #f7f9fd; font-size: 12px; line-height: 1.85; }
+.overview-refund-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; color: #66758c; font-size: 12px; }
+.overview-refund-filter input { width: 160px; }
+.overview-refund-table { max-height: 320px; border: 1px solid #e6ebf2; border-radius: 9px; }
+.overview-refund-table th { position: sticky; top: 0; z-index: 1; }
+.overview-refund-empty { padding: 25px 12px; color: #7b889f; font-size: 12px; text-align: center; line-height: 1.8; }

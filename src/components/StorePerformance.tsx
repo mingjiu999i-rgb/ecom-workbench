@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
 import { buildPerformance, shiftDate, summarizePerformance, validDate, type PerformanceSummary } from '../utils/performanceSummary'
 import { Modal } from './Overlay'
+import { OverviewRefundMetric } from './OverviewRefundActivity'
 
 const money = (value: number | null) => value == null ? '—' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const percent = (value: number | null) => value == null ? '—' : `${(value * 100).toFixed(2)}%`
@@ -72,7 +73,7 @@ export function StorePerformance() {
     </div></div>
     {period === 'custom' && <div className="performance-dates"><label>开始日期<input type="date" aria-label="业绩开始日期" value={customStart} max={customEnd || undefined} onChange={event => changeDate('start', event.target.value)} /></label><span>至</span><label>结束日期<input type="date" aria-label="业绩结束日期" value={customEnd} min={customStart || undefined} onChange={event => changeDate('end', event.target.value)} /></label></div>}
     {!validRange ? <div className="performance-note negative" role="alert">请选择完整日期范围，且开始日期不能晚于结束日期。</div> : <>
-      <div className="performance-metrics">{metrics.map(([label, amount, Icon, tone]) => <article className="metric" key={label}><div className={`metric-icon ${tone}`}><Icon size={19} /></div><div><span>{label}</span>{label === '甲方盈利' ? <button className="metric-amount" aria-label="查看全部店铺盈利构成" disabled={!performance.total.hasData} onClick={() => show('profit', selectedStore?.name || '全部店铺')}><strong>{money(amount)}</strong><small>查看构成</small></button> : label === '已发货退款' ? <button className="metric-amount" aria-label="查看退款口径与来源" disabled={amount == null} onClick={() => show('refund', selectedStore?.name || '全部店铺')}><strong>{money(amount)}</strong><small>查看来源</small></button> : <strong>{money(amount)}</strong>}</div></article>)}</div>
+      <div className="performance-metrics">{metrics.map(([label, amount, Icon, tone]) => label === '已发货退款' ? <OverviewRefundMetric key={label} start={startDate} end={endDate} storeIds={allIds} onViewOrder={(targetStoreId, orderDate) => detail(targetStoreId, orderDate, orderDate)} /> : <article className="metric" key={label}><div className={`metric-icon ${tone}`}><Icon size={19} /></div><div><span>{label}</span>{label === '甲方盈利' ? <button className="metric-amount" aria-label="查看全部店铺盈利构成" disabled={!performance.total.hasData} onClick={() => show('profit', selectedStore?.name || '全部店铺')}><strong>{money(amount)}</strong><small>查看构成</small></button> : <strong>{money(amount)}</strong>}</div></article>)}</div>
       <div className="performance-summary-status">{status(performance.total, selectedStore?.name || '全部店铺', allIds)}{overdueStores.length > 0 && <span>{overdueStores.length} 家启用店铺昨天暂无回款记录，可在店铺明细核对。</span>}</div>
       <p className="performance-note">已发货退款按原订单成交日期回填，后续退款更新原日期的销售额和利润。{performance.total.legacyRefund && '部分数据仍为旧版退款口径，请在经营结算重新导入报表。'}{performance.total.partial && '销售额、运营费用和盈利按已保存的产品数据汇总；金额可能不完整，可点击“部分汇总”查看待处理日期。'}</p>
       {!performance.total.recordCount ? <div className="performance-empty">{rangeLabel} 暂无已保存的经营数据，请到经营结算导入报表。<button className="text-button" onClick={() => detail(selectedStore?.id || allIds[0] || '')}>前往经营结算 <ArrowRight size={14} /></button></div> : <>
