@@ -9,3 +9,10 @@
 .overview-refund-table { max-height: 320px; border: 1px solid #e6ebf2; border-radius: 9px; }
 .overview-refund-table th { position: sticky; top: 0; z-index: 1; }
 .overview-refund-empty { padding: 25px 12px; color: #7b889f; font-size: 12px; text-align: center; line-height: 1.8; }
+.overview-refund-equation { display: flex; align-items: center; gap: 15px; padding: 16px; margin-bottom: 14px; border: 1px solid #e5eaf3; border-radius: 9px; background: #f7f9fd; }
+.overview-refund-equation > div { flex: 1; min-width: 0; }
+.overview-refund-equation span { display: block; color: #718096; font-size: 12px; }
+.overview-refund-equation strong { display: block; margin-top: 7px; color: #263754; font-size: 20px; font-variant-numeric: tabular-nums; }
+.overview-refund-client { background: #f6f8fc; font-weight: 650; }
+.overview-refund-table tfoot { background: #f2f6ff; font-weight: 650; }
+@media (max-width: 600px) { .overview-refund-equation { flex-wrap: wrap; gap: 12px; } .overview-refund-equation > div { flex-basis: 80%; } }

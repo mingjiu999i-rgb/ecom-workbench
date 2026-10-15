@@ -1,63 +1,89 @@
 import { RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useWorkbench } from '../store/workbench'
-import { getOverviewRefundActivity, observeOverviewRefunds, summarizeOverviewRefunds } from '../utils/overviewRefundActivity'
+import { observeOverviewRefunds, overviewDay, summarizeOverviewRefundTotals } from '../utils/overviewRefundActivity'
 import { Modal } from './Overlay'
 import './overview-refund.css'
 
-const money = (amount: number | null) => amount == null ? '未记录' : `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const money = (amount: number | null) => amount == null ? '待核对' : `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const changeMoney = (amount: number | null) => amount == null ? '待核对' : `${amount > 0 ? '+' : ''}${money(amount)}`
 const time = (timestamp: string) => new Date(timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 
-// Mounted beside the overview's host layout so imports are observed while the settlement page is open.
-// This observer writes only overviewRefundActivity; every settlement field is preserved by reference.
+// Only overview snapshots change here; all settlement data is preserved.
 export function OverviewRefundTracker() {
   const { data, update } = useWorkbench()
   useEffect(() => {
-    const now = new Date().toISOString()
-    if (observeOverviewRefunds(data, now) !== data) update(current => observeOverviewRefunds(current, now))
+    const observe = () => {
+      const now = new Date().toISOString()
+      if (observeOverviewRefunds(data, now) !== data) update(current => observeOverviewRefunds(current, now))
+    }
+    observe()
+    // Roll the daily comparison forward even when a tab stays open overnight.
+    const timer = window.setInterval(observe, 60000)
+    return () => window.clearInterval(timer)
   }, [data, update])
   return null
 }
 
-export function OverviewRefundMetric({ start, end, storeIds, onViewOrder }: {
+export function OverviewRefundMetric({ storeIds, onViewOrder }: {
   start: string; end: string; storeIds: string[]
   onViewOrder: (storeId: string, orderDate: string) => void
 }) {
   const { data } = useWorkbench()
   const [open, setOpen] = useState(false)
-  const [orderDate, setOrderDate] = useState('')
-  const summary = useMemo(() => summarizeOverviewRefunds(data, start, end, new Set(storeIds)), [data, start, end, storeIds])
-  const rows = summary.changes.filter(row => !orderDate || row.orderDate === orderDate)
-  const state = getOverviewRefundActivity(data)
+  const today = overviewDay(new Date().toISOString())
+  const summary = useMemo(() => summarizeOverviewRefundTotals(data, today, new Set(storeIds)), [data, today, storeIds])
   useEffect(() => {
     if (!open) return
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
   }, [open])
+  const decreasing = summary.amount != null && summary.amount < 0
   return <>
     <article className="metric overview-refund-metric">
       <div className="metric-icon red"><RotateCcw size={19} /></div>
-      <div><span>新增已发货退款</span><button className="metric-amount" aria-label="查看新增退款明细" onClick={() => { setOrderDate(''); setOpen(true) }}>
-        <strong>{money(summary.amount)}</strong><small>{summary.partial ? '部分时段 · ' : ''}按导入日期 · 查看明细</small>
-      </button></div>
+      <div><span>{decreasing ? '今日导入退款调减' : '今日导入新增退款'}</span>
+        <button className="metric-amount" aria-label="查看今日新增退款店铺明细" onClick={() => setOpen(true)}>
+          <strong>{summary.hasData ? money(summary.amount) : '暂无记录'}</strong>
+          <small>系统累计 {summary.hasData ? money(summary.after) : '暂无记录'}</small>
+          <small>全历史累计对比 · 查看店铺明细</small>
+        </button>
+      </div>
     </article>
-    {open && <Modal wide title="新增退款 · 按导入日期" onClose={() => setOpen(false)}>
+    {open && <Modal wide title="今日导入新增退款 · 店铺明细" onClose={() => setOpen(false)}>
       <div className="modal-body overview-refund-detail">
-        <p>{start === end ? start : `${start} 至 ${end}`} · 仅统计所选店铺</p>
-        <dl className="profit-breakdown"><div><dt>本期退款净增</dt><dd>{money(summary.amount)}</dd></div><div><dt>新增退款</dt><dd>{money(summary.added)}</dd></div><div><dt>退款调减</dt><dd>{money(summary.reduced)}</dd></div></dl>
-        <p>按导入后发现变化的日期记录。例如 10 月 13 日导入后，9 月 30 日订单的累计退款从 100 元变为 130 元，10 月 13 日新增记 30 元。重复导入金额不变时不计数；调减按负数记录。</p>
-        <p>此卡片按导入日期统计；下方退款率、趋势和店铺表格按原订单日期统计，两种金额不能直接对比。</p>
-        <div className="overview-refund-notice">
-          {summary.initializedAt ? <>开始记录于 {time(summary.initializedAt)}。首次读取只建立基准，更新前的历史新增无法倒推。{summary.partial && '所选时段包含开始记录前的日期，金额只包含已记录部分。'}</> : '正在建立总览基准，尚无新增记录。'}
-          {summary.amount == null && '所选日期尚未开始记录，暂无可核对的新增金额。'}
-          {summary.unknownBalances > 0 && `另有 ${summary.unknownBalances} 条历史记录缺少可核对的累计退款金额，首次补齐时只建立基准。`}
+        <p>{today} · 仅统计所选店铺 · 已保存 {summary.recordedDays} 个成交日的数据</p>
+        <div className="overview-refund-equation" aria-label="累计退款前后对比">
+          <div><span>导入前累计（今日基准）</span><strong>{money(summary.before)}</strong></div>
+          <span aria-hidden="true">→</span>
+          <div><span>导入后累计（当前）</span><strong>{money(summary.after)}</strong></div>
+          <span aria-hidden="true">=</span>
+          <div><span>今日{decreasing ? '调减' : '净增加'}</span><strong>{changeMoney(summary.amount)}</strong></div>
         </div>
-        <label className="overview-refund-filter"><span>追溯原订单日期</span><input type="date" aria-label="筛选新增退款的原订单日期" value={orderDate} onChange={event => setOrderDate(event.target.value)} /><button className="text-button" onClick={() => setOrderDate('')}>全部日期</button></label>
-        <div className="table-scroll overview-refund-table"><table><thead><tr><th>发现时间</th><th>店铺</th><th>原订单日期</th><th>导入前累计</th><th>导入后累计</th><th>本次变化</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td>{time(row.observedAt)}</td><td>{data.stores.find(store => store.id === row.storeId)?.name || '历史店铺'}</td><td><button className="text-button" aria-label={`查看${row.storeId} ${row.orderDate}原订单结算`} onClick={() => { setOpen(false); onViewOrder(row.storeId, row.orderDate) }}>{row.orderDate}</button></td><td>{money(row.before)}</td><td>{money(row.after)}</td><td className={row.amount < 0 ? 'positive' : 'negative'}>{row.amount > 0 ? '+' : ''}{money(row.amount)}</td></tr>)}</tbody></table></div>
-        {!rows.length && <div className="overview-refund-empty">{!state || summary.amount == null ? '这个时段尚未记录新增退款。' : orderDate ? '该原订单日期没有本期新增记录。' : '所选时段内尚未记录到退款金额变化。'}</div>}
+        <p>新增退款 = 系统当前累计已发货退款 − 今日导入前基准累计退款。包含系统保存的全部订单日期；今天多次导入合并统计，重复导入不重复增加，不受上方“昨天／本月／自定义”的订单日期筛选影响。</p>
+        {summary.partialDay && <div className="overview-refund-notice">{summary.baselineAt ? `从 ${time(summary.baselineAt)} 建立的基准开始比较；建立基准以前的新增金额未记录，不能倒推。` : '尚未建立导入前基准，暂时无法计算增加金额。'}</div>}
+        {summary.unknownBalances > 0 && <div className="overview-refund-notice">部分历史退款金额缺失，导入前后差额暂时待核对，不以零代替。补齐后的累计金额可以展示，但无法推算缺失的历史基准。</div>}
+        <div className="table-scroll overview-refund-table">
+          <table><thead><tr><th>甲方 / 店铺</th><th>已保存成交日</th><th>导入前累计</th><th>当前累计</th><th>今日新增 / 调减</th></tr></thead>
+            <tbody>{summary.clients.map(client => <StoreGroup key={client.clientId} client={client} onView={storeId => { setOpen(false); onViewOrder(storeId, '') }} />)}</tbody>
+            {summary.hasData && <tfoot><tr><td>合计</td><td>{summary.recordedDays} 天</td><td>{money(summary.before)}</td><td>{money(summary.after)}</td><td>{changeMoney(summary.amount)}</td></tr></tfoot>}
+          </table>
+        </div>
+        {!summary.hasData && <div className="overview-refund-empty">所选店铺暂无已保存的退款汇总。</div>}
+        <p>店铺金额相加即为本次展示的总变化；负数表示历史数据调减。金额来自经营结算已保存的结果，尚未成功回填的退款不会被推算进来。</p>
       </div>
       <div className="modal-actions"><button className="button secondary" onClick={() => setOpen(false)}>关闭</button></div>
     </Modal>}
+  </>
+}
+
+function StoreGroup({ client, onView }: {
+  client: ReturnType<typeof summarizeOverviewRefundTotals>['clients'][number]
+  onView: (storeId: string) => void
+}) {
+  return <>
+    <tr className="overview-refund-client"><td>{client.name}</td><td>{client.recordedDays} 天</td><td>{money(client.before)}</td><td>{money(client.after)}</td><td>{changeMoney(client.amount)}</td></tr>
+    {client.stores.map(store => <tr key={store.storeId}><td><button className="text-button" aria-label={`查看${store.name}经营结算`} onClick={() => onView(store.storeId)}>{store.name}</button></td><td>{store.recordedDays} 天</td><td>{money(store.before)}</td><td>{money(store.after)}</td><td className={store.amount != null && store.amount > 0 ? 'negative' : ''}>{changeMoney(store.amount)}</td></tr>)}
   </>
 }
