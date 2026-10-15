@@ -1,7 +1,7 @@
 import { RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useWorkbench } from '../store/workbench'
-import { observeOverviewRefunds, overviewDay, summarizeOverviewRefundTotals } from '../utils/overviewRefundActivity'
+import { observeOverviewRefunds, overviewDay, overviewRefundDetailClients, summarizeOverviewRefundTotals } from '../utils/overviewRefundActivity'
 import { Modal } from './Overlay'
 import './overview-refund.css'
 
@@ -33,6 +33,7 @@ export function OverviewRefundMetric({ storeIds, onViewOrder }: {
   const [open, setOpen] = useState(false)
   const today = overviewDay(new Date().toISOString())
   const summary = useMemo(() => summarizeOverviewRefundTotals(data, today, new Set(storeIds)), [data, today, storeIds])
+  const detailClients = useMemo(() => overviewRefundDetailClients(summary), [summary])
   useEffect(() => {
     if (!open) return
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
@@ -66,12 +67,13 @@ export function OverviewRefundMetric({ storeIds, onViewOrder }: {
         {summary.unknownBalances > 0 && <div className="overview-refund-notice">部分历史退款金额缺失，导入前后差额暂时待核对，不以零代替。补齐后的累计金额可以展示，但无法推算缺失的历史基准。</div>}
         <div className="table-scroll overview-refund-table">
           <table><thead><tr><th>甲方 / 店铺</th><th>已保存成交日</th><th>导入前累计</th><th>当前累计</th><th>今日新增 / 调减</th></tr></thead>
-            <tbody>{summary.clients.map(client => <StoreGroup key={client.clientId} client={client} onView={storeId => { setOpen(false); onViewOrder(storeId, '') }} />)}</tbody>
-            {summary.hasData && <tfoot><tr><td>合计</td><td>{summary.recordedDays} 天</td><td>{money(summary.before)}</td><td>{money(summary.after)}</td><td>{changeMoney(summary.amount)}</td></tr></tfoot>}
+            <tbody>{detailClients.map(client => <StoreGroup key={client.clientId} client={client} onView={storeId => { setOpen(false); onViewOrder(storeId, '') }} />)}</tbody>
+            {summary.hasData && <tfoot><tr><td>全部所选店铺合计</td><td>{summary.recordedDays} 天</td><td>{money(summary.before)}</td><td>{money(summary.after)}</td><td>{changeMoney(summary.amount)}</td></tr></tfoot>}
           </table>
         </div>
         {!summary.hasData && <div className="overview-refund-empty">所选店铺暂无已保存的退款汇总。</div>}
-        <p>店铺金额相加即为本次展示的总变化；负数表示历史数据调减。金额来自经营结算已保存的结果，尚未成功回填的退款不会被推算进来。</p>
+        {summary.hasData && detailClients.length === 0 && <div className="overview-refund-empty">今日暂无新增或调减退款。</div>}
+        <p>仅显示退款有变化或待核对的店铺，无变化店铺及其空甲方分组自动隐藏。甲方小计及合计的累计金额仍包含无变化店铺；显示店铺的变化金额相加即为总变化，负数表示历史数据调减。金额来自经营结算已保存的结果，尚未成功回填的退款不会被推算进来。</p>
       </div>
       <div className="modal-actions"><button className="button secondary" onClick={() => setOpen(false)}>关闭</button></div>
     </Modal>}

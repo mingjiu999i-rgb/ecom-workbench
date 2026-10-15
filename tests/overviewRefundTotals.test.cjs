@@ -6,7 +6,7 @@ require.extensions['.ts'] = (module, filename) => {
   const output = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } })
   module._compile(output.outputText, filename)
 }
-const { observeOverviewRefunds: observe, summarizeOverviewRefundTotals: totals } = require('../src/utils/overviewRefundActivity.ts')
+const { observeOverviewRefunds: observe, summarizeOverviewRefundTotals: totals, overviewRefundDetailClients: detailClients } = require('../src/utils/overviewRefundActivity.ts')
 const prior = '2026-10-14T01:00:00Z', morning = '2026-10-15T01:00:00Z', later = '2026-10-15T02:00:00Z'
 const day = '2026-10-15', all = new Set(['a', 'b', 'c'])
 const row = (storeId, amount, date = '2026-09-30') => ({ id: `${storeId}|${date}`, storeId, date, shippedRefund: amount, refundBasis: 'order_paid_at' })
@@ -17,6 +17,41 @@ const data = records => ({
 })
 const baseline = () => observe(data([row('a', 200), row('b', 300), row('c', 500)]), prior)
 const update = (value, records, time = morning) => observe({ ...value, collectionRecords: records }, time)
+
+test('detail hides unchanged stores and empty client groups without changing cumulative totals', () => {
+  const value = update(baseline(), [row('a', 300), row('b', 300), row('c', 500)])
+  const summary = totals(value, day, all)
+  const snapshot = JSON.stringify(summary)
+  const visible = detailClients(summary)
+  assert.deepEqual(visible.map(client => [client.name, client.stores.map(store => store.storeId)]), [['甲方一', ['a']]])
+  assert.equal(visible[0].before, 500)
+  assert.equal(visible[0].after, 600)
+  assert.equal(summary.before, 1000)
+  assert.equal(summary.after, 1100)
+  assert.equal(summary.amount, 100)
+  assert.equal(JSON.stringify(summary), snapshot)
+})
+
+test('detail shows empty state when all stores are unchanged', () => {
+  const value = observe(baseline(), morning)
+  assert.deepEqual(detailClients(totals(value, day, all)), [])
+})
+
+test('detail retains negative adjustments even when the client net change is zero', () => {
+  const value = update(baseline(), [row('a', 240), row('b', 260), row('c', 500)])
+  const summary = totals(value, day, all)
+  const visible = detailClients(summary)
+  assert.equal(summary.amount, 0)
+  assert.equal(visible.length, 1)
+  assert.deepEqual(visible[0].stores.map(store => store.amount), [40, -40])
+})
+
+test('detail retains unknown balances instead of treating them as unchanged', () => {
+  const unknown = { ...row('a', 0), refundBasis: 'refund_completed_at', orderShippedRefund: undefined }
+  const value = update(observe(data([unknown, row('c', 500)]), prior), [unknown, row('c', 500)])
+  const visible = detailClients(totals(value, day, all))
+  assert.deepEqual(visible.map(client => client.stores.map(store => [store.storeId, store.amount])), [[['a', null]]])
+})
 
 test('1000 to 1180 displays 180 and the three stores reconcile to 100 + 60 + 20', () => {
   const value = update(baseline(), [row('a', 300), row('b', 360), row('c', 520)])

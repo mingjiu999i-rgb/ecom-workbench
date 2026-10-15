@@ -125,6 +125,12 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
     unknownBalances: stores.reduce((sum, row) => sum + row.unknownBalances, 0) }
 }
 
+// Hide only confirmed zero changes; unknown amounts still need reconciliation.
+export function overviewRefundDetailClients(summary: ReturnType<typeof summarizeOverviewRefundTotals>) {
+  return summary.clients.map(client => ({ ...client, stores: client.stores.filter(store => store.amount !== 0) }))
+    .filter(client => client.stores.length > 0)
+}
+
 export function summarizeOverviewRefunds(data: WorkbenchData, start: string, end: string, storeIds: Set<string>) {
   const state = getOverviewRefundActivity(data)
   const trackingStart = state ? overviewDay(state.initializedAt) : null
