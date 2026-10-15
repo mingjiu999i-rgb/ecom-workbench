@@ -26,6 +26,7 @@ const labels: Record<string, string> = {
   productCosts: '成本资料', skus: '商品 SKU', operations: '调整记录', skuHistory: 'SKU 历史',
   todos: '待办事项', profitRecords: '产品利润记录', collectionRecords: '经营结算汇总',
   orderAccountingLedgers: '订单结算账本', overviewRefundActivity: '总览退款观察记录', skuPlanningDrafts: 'SKU 草稿',
+  linkSalesOrders: '商品 ID 独立索引', linkSalesPromotions: '商品 ID 手填推广费',
 }
 export function recoveryDifferences(local: unknown, cloud: unknown) {
   const a = local && typeof local === 'object' ? local as Record<string, unknown> : {}

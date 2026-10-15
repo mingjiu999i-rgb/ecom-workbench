@@ -1,0 +1,22 @@
+.link-profit-explanation{padding:20px 24px;display:grid;gap:8px;border-left:3px solid var(--primary,#2563eb)}
+.link-profit-explanation strong{font-size:16px;color:var(--text,#172337)}
+.link-profit-explanation span,.link-profit-tablebar>span{font-size:12px;color:var(--muted,#64748b);line-height:1.8}
+.link-profit-filters{padding:20px;display:grid;grid-template-columns:repeat(4,minmax(120px,1fr)) minmax(160px,1.5fr);gap:14px}
+.link-profit-notice{padding:14px 18px;border:1px solid #eadbb0;border-radius:10px;background:#fffaf0;color:#795c22;display:grid;gap:5px;font-size:13px;line-height:1.7}
+.link-profit-tablebar{padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border,#e5eaf1);flex-wrap:wrap}
+.link-profit-tabs{display:flex;gap:4px;background:#f1f5f9;padding:4px;border-radius:8px}
+.link-profit-tabs button{border:0;background:transparent;border-radius:6px;padding:9px 14px;color:#667085;font-weight:600;cursor:pointer}
+.link-profit-tabs button.active{background:#fff;color:#2563eb;box-shadow:0 1px 3px #152a5012}
+.link-profit-table{min-width:940px}.link-profit-table.is-daily{min-width:1100px}
+.link-profit-table td{vertical-align:middle;font-variant-numeric:tabular-nums}
+.link-profit-table small{display:block;font-size:11px;color:#8591a3;margin-top:5px;line-height:1.5}
+.link-profit-table .link-profit-name{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.link-profit-id{font-family:ui-monospace,monospace;font-size:13px}
+.link-profit-table .link-profit-warning{color:#b07821}
+.link-promotion-input{width:112px;border:1px solid #cedff4;background:#f0f6ff;padding:10px 12px;border-radius:5px;color:#174276;font-variant-numeric:tabular-nums}
+.link-promotion-input:focus{outline:2px solid #3979dd;outline-offset:1px}
+.link-profit-fill{border:0;background:none;color:#2563eb;padding:0;cursor:pointer}
+.link-profit-empty{min-height:260px;padding:48px 28px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#8390a2;text-align:center}
+.link-profit-empty strong{color:#364152}.link-profit-empty span{max-width:640px;line-height:1.9;font-size:13px}
+@media(max-width:1000px){.link-profit-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.link-profit-page .page-heading{align-items:flex-start;gap:14px;flex-direction:column}}
+@media(max-width:520px){.link-profit-filters{grid-template-columns:1fr}.link-profit-explanation{padding:16px}.link-profit-tabs button{padding:8px}}

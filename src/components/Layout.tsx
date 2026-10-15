@@ -13,6 +13,7 @@ const items = [
   { to: '/operations', label: '调整记录', icon: ClipboardList },
   { to: '/master-data', label: '基础资料', icon: Database },
   { to: '/profit-preview', label: '经营结算', icon: BarChart3 },
+  { to: '/link-profit', label: '商品 ID 盈亏', icon: Calculator },
 ]
 
 export function Layout() {

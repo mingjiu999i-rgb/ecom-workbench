@@ -10,6 +10,7 @@ import { isSupplementOrder, normalizeSpecification, resolveProductCost, type Pro
 import type { Order, Refund, Fund, FundCategory, Promotion, Summary, ProductMetric } from '../utils/pddCalculations'
 import { preparePddAccounting, reportFingerprint } from '../utils/pddLedger'
 import { exportSettlementWorkbook, settlementExportValidation } from '../utils/settlementWorkbook'
+import { mergeLinkSalesOrders, parseLinkSalesRows, type LinkSalesOrder } from '../utils/linkSales'
 
 type Row = Record<string, string | number>
 type DeductionBreakdown = { key: string; businessCode: string; businessName: string; accountType: string; deductionCount: number; deduction: number; reimbursementCount: number; reimbursement: number; netDeduction: number }
@@ -107,6 +108,8 @@ export function PddAnalyzer() {
   const [startDate, setStartDate] = useState(requestedStart)
   const [endDate, setEndDate] = useState(requestedEnd)
   const [orders, setOrders] = useState<Map<string, Order>>(new Map())
+  const [linkSalesBatch, setLinkSalesBatch] = useState<LinkSalesOrder[]>([])
+  const [linkSalesWarning, setLinkSalesWarning] = useState('')
   const [refunds, setRefunds] = useState<Map<string, Refund>>(new Map())
   const [funds, setFunds] = useState<Map<string, Fund>>(new Map())
   const [promotions, setPromotions] = useState<Map<string, Promotion>>(new Map())
@@ -136,6 +139,12 @@ export function PddAnalyzer() {
     const headerSet = new Set(headers)
     const rows = table.slice(headerIndex + 1).filter(row => row.some(cell => text(cell))).map(row => rowObject(headers, row))
     if (headerSet.has('订单号') && (headerSet.has('支付时间') || headerSet.has('订单成交时间'))) {
+      // Sidecar only: keep real listing IDs separately. Settlement parsing below is unchanged.
+      try {
+        const listingRows = parseLinkSalesRows(storeId, rows)
+        setLinkSalesBatch(current => [...current, ...listingRows])
+        if (listingRows.length !== rows.length) setLinkSalesWarning('部分行缺少订单号，未进入商品 ID 分析；经营结算仍按原流程处理。')
+      } catch { setLinkSalesWarning('商品 ID 独立分析读取失败，经营结算仍按原流程处理；请重新导入订单报表。') }
       setReportTypes(current => new Set([...current, 'orders']))
       setOrders(current => { const next = new Map(current); rows.forEach(row => { const id = text(row['订单号']); const payTime = text(row['支付时间'] || row['订单成交时间']); if (id) next.set(id, { id, shop: targetShop, payTime, payDate: dateText(payTime), receipt: amount(row['商家实收金额(元)']), status: text(row['订单状态']), productId: text(row['商品id'] || row['商品ID']), product: text(row['商品']), specification: text(row['商品规格']), skuCode: text(row['商家编码-规格维度']), quantity: Number(row['商品数量(件)'] || 0) }) }); return next })
       return `订单 ${rows.length} 行`
@@ -163,6 +172,7 @@ export function PddAnalyzer() {
     const targetShop = shop.trim()
     if (!storeId || !targetShop) { setError('请先选择店铺'); return }
     setBusy(true); setError(''); setImportReady(false); setReportTypes(new Set())
+    setLinkSalesBatch([]); setLinkSalesWarning('')
     setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setMessages([])
     const imported: string[] = []
     try {
@@ -205,6 +215,11 @@ export function PddAnalyzer() {
     resolveCost, linkedProductId, products: data.products,
   }), [storeId, shop, previousLedger, orders, refunds, funds, promotions, reportTypes, savedRecords, savedProfits, availableCosts, clientProducts, data.productLinks, data.products, manualCostIds])
   const { summaries, productMetrics } = accounting
+  useEffect(() => {
+    if (busy || !importReady || !linkSalesBatch.length) return
+    // A separate update preserves every settlement field and never feeds back into accounting.
+    update(current => mergeLinkSalesOrders(current, linkSalesBatch))
+  }, [busy, importReady, linkSalesBatch, update])
   const total = useMemo(() => combine(summaries), [summaries])
   const filteredRecords = useMemo(() => savedRecords.filter(record => (!startDate || record.date >= startDate) && (!endDate || record.date <= endDate)), [savedRecords, startDate, endDate])
   const savedSummaries = useMemo(() => filteredRecords.map(record => ({ shop, date: record.date, orderCount: record.orderCount, originalSales: record.originalSales, effectiveSales: record.effectiveSales, shippedRefund: record.shippedRefund, orderShippedRefund: record.orderShippedRefund ?? record.shippedRefund, couponRefund: record.couponRefund, basicServiceFee: record.basicServiceFee, afterSaleCompensation: record.afterSaleCompensation, smallPayment: record.smallPayment, appealReimbursement: record.appealReimbursement, productCost: record.productCost, promotionFee: record.promotionFee, estimatedProfit: record.estimatedProfit, currentNet: record.currentNet, unsettledAmount: record.unsettledAmount, profit: record.profit, eligibleOrders: record.eligibleOrders, settledOrders: record.settledOrders, completionRate: record.completionRate, mature: record.mature, missingCostOrders: record.missingCostOrders, unknownFunds: record.unknownFunds })), [filteredRecords, shop])
@@ -267,7 +282,7 @@ export function PddAnalyzer() {
     setExpandedMonths(savedMonthGroups[0] ? new Set([savedMonthGroups[0].month]) : new Set())
   }, [storeId, savedMonthSignature])
 
-  const clear = () => { setImportReady(false); setReportTypes(new Set()); setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCostIds(new Map()); setMessages([]); setError('') }
+  const clear = () => { setImportReady(false); setReportTypes(new Set()); setOrders(new Map()); setRefunds(new Map()); setFunds(new Map()); setPromotions(new Map()); setManualCostIds(new Map()); setMessages([]); setError(''); setLinkSalesBatch([]); setLinkSalesWarning('') }
   useEffect(() => {
     setStoreId(requestedStore?.id || '')
     setExportClientId(requestedStore?.clientId || '')
@@ -299,6 +314,8 @@ export function PddAnalyzer() {
     <div className="page-heading"><div><span className="eyebrow">订单回款 + 产品利润</span><h1>甲方经营结算</h1><p>一次导入同时更新各店铺回款与跨店产品利润，所有甲方统一导出总览、产品预览和每店独立回款明细。</p></div><div className="heading-actions"><button className="button secondary" onClick={clear}><RotateCcw size={16} />清空本次数据</button><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></div></div>
     <section className="privacy-strip"><ShieldCheck size={18} /><div><strong>保存汇总与回填索引</strong><span>保存订单号、成交日期、成本金额及售后／流水计算索引，用于历史回填和重复导入去重；不保存原始文件和收件人信息。</span></div></section>
     <section className="panel pdd-import"><div><label className="field"><span>选择店铺</span><select value={storeId} onChange={event => { const nextStoreId = event.target.value; setStoreId(nextStoreId); setExportClientId(data.stores.find(item => item.id === nextStoreId)?.clientId || ''); clear() }}><option value="">请选择店铺</option>{activeStores.map(item => <option key={item.id} value={item.id}>{data.clients.find(client => client.id === item.clientId)?.name} · {item.name}</option>)}</select></label><p>一次选择同一店铺的订单、退款、资金和推广费文件；首次导入订单后，后续可只补导售后或资金报表，自动回填原订单日期；历史推广费保留，重叠报表自动去重。</p></div><button className="button primary" disabled={busy || !storeId} onClick={() => inputRef.current?.click()}><Upload size={16} />{busy ? '正在解析…' : '选择报表并计算'}</button><input ref={inputRef} hidden type="file" multiple accept=".csv,.xls,.xlsx,.zip" onChange={event => event.target.files && void importFiles(event.target.files)} /></section>
+    {linkSalesWarning && <div className="pdd-message warning" role="alert">{linkSalesWarning}</div>}
+    {importReady && linkSalesBatch.length > 0 && <div className="pdd-message"><span>已额外记录本次订单的商品 ID；不扣退款的链接利润请到 <Link to="/link-profit">商品 ID 盈亏</Link> 填写每日推广费。</span></div>}
     <section className="panel pdd-import profit-import"><div><div className="form-grid"><label className="field field-full"><span>导出甲方</span><select value={exportClientId} onChange={event => setExportClientId(event.target.value)}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>开始日期</span><input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label className="field"><span>结束日期</span><input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div><p>所有甲方统一导出“总览 + 产品预览 + 每个店铺独立回款明细”，可在各工作表分别隐藏行列；日期留空表示全部。{exportValidation.blocking.length ? ` 当前无法导出：${exportValidation.blocking.join('；')}` : exportValidation.warnings.length ? ' 当前有数据提醒，点击导出后可选择重新导入或忽略提醒继续。' : exportRecordCount ? ` 已找到 ${exportRecordCount} 条回款记录。` : ''}</p></div><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></section>
     {exportValidation.warnings.length > 0 && <div className="pdd-message warning"><strong>数据提醒</strong><span>{exportValidation.warnings.join('；')}。仍可点击“导出甲方结算”选择忽略并继续。</span></div>}
     {importReady && (accounting.unmatchedRefunds > 0 || accounting.unmatchedFunds > 0) && <div className="pdd-message warning"><strong>有记录待回填</strong><span>{accounting.unmatchedRefunds} 条成功售后、{accounting.unmatchedFunds} 条资金流水尚未找到原订单；已保存计算索引，补导对应历史订单后会自动回填，不会计入发生当天。</span></div>}
