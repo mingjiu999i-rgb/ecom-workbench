@@ -52,13 +52,20 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   return { ...value, stores, products, productCosts, productLinks, skus, skuHistory: value.skuHistory || [], todos: value.todos || [], profitRecords: value.profitRecords || [], collectionRecords }
 }
 
-export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
+export async function loadWorkbenchSnapshot(userId: string): Promise<{ data: WorkbenchData; storedData: WorkbenchData }> {
   const { data, error } = await supabase.from('workbench_documents').select('data').eq('user_id', userId).maybeSingle()
   if (error) throw error
-  if (data?.data) return normalizeWorkbench(data.data as WorkbenchData)
+  if (data?.data) {
+    const storedData = data.data as WorkbenchData
+    return { data: normalizeWorkbench(storedData), storedData }
+  }
   const initial = cloneInitialData()
   await saveWorkbench(userId, initial)
-  return initial
+  return { data: initial, storedData: initial }
+}
+
+export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
+  return (await loadWorkbenchSnapshot(userId)).data
 }
 
 export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {

@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Cloud, LoaderCircle, LockKeyhole, Mail } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
-import { isSupabaseConfigured, loadWorkbench, saveWorkbench, supabase } from '../services/supabase'
+import { isSupabaseConfigured, loadWorkbenchSnapshot, saveWorkbench, supabase } from '../services/supabase'
 import type { WorkbenchData } from '../types/models'
 import { isActiveProductLink } from '../utils/selectors'
-import { readWorkbenchDraft, removeWorkbenchDraft, writeWorkbenchDraft } from '../services/workbenchDrafts'
+import { acknowledgeWorkbenchDraft, readWorkbenchDraft, removeWorkbenchDraft, writeWorkbenchDraft } from '../services/workbenchDrafts'
 import { createWorkbenchSync, describeSyncError, type PendingDraft, type SyncState } from '../utils/workbenchSync'
+import { inspectWorkbenchRecovery, isResolvedDraft, type recoveryDifferences } from '../utils/workbenchRecovery'
 
 type SyncStatus = 'saved' | 'saving' | 'error'
 interface WorkbenchContextValue {
@@ -17,6 +18,7 @@ interface WorkbenchContextValue {
   syncError: string
   syncErrorDetail: string
   backupError: string
+  cleanupError: string
   retrySync: () => void
 }
 
@@ -29,6 +31,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [loadError, setLoadError] = useState('')
   const [syncState, setSyncState] = useState<SyncState>({ status: 'saved', error: null, backupError: '' })
   const [recovery, setRecovery] = useState<PendingDraft<WorkbenchData> | null>(null)
+  const [differences, setDifferences] = useState<ReturnType<typeof recoveryDifferences>>([])
+  const [recoveryIssue, setRecoveryIssue] = useState('')
+  const [resolving, setResolving] = useState(false)
   const dataRef = useRef<WorkbenchData | null>(null)
   const syncRef = useRef<ReturnType<typeof createWorkbenchSync<WorkbenchData>> | null>(null)
   const userId = session?.user.id
@@ -45,25 +50,27 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     dataRef.current = null
     setData(null)
     setRecovery(null)
+    setDifferences([]); setRecoveryIssue(''); setResolving(false)
     setLoadError('')
     setSyncState({ status: 'saved', error: null, backupError: '' })
     const manager = createWorkbenchSync<WorkbenchData>({
       userId, save: (value, signal) => saveWorkbench(userId, value, signal),
-      storage: { write: writeWorkbenchDraft, remove: removeWorkbenchDraft },
+      storage: { write: writeWorkbenchDraft, remove: removeWorkbenchDraft, acknowledge: acknowledgeWorkbenchDraft },
       notify: state => { if (active) setSyncState(state) },
     })
     syncRef.current = manager
     const load = async () => {
-      const [cloud, draft] = await Promise.allSettled([loadWorkbench(userId), readWorkbenchDraft(userId)])
+      const [cloud, draft] = await Promise.allSettled([loadWorkbenchSnapshot(userId), readWorkbenchDraft(userId)])
       if (!active) return
       const local = draft.status === 'fulfilled' ? draft.value : null
       if (cloud.status === 'fulfilled') {
-        dataRef.current = cloud.value
-        setData(cloud.value)
-        if (local && JSON.stringify(local.data) !== JSON.stringify(cloud.value)) setRecovery(local)
-        else if (local) void removeWorkbenchDraft(userId, local.id).catch(() => {})
+        dataRef.current = cloud.value.data
+        setData(cloud.value.data)
+        const inspection = inspectWorkbenchRecovery(local, cloud.value.storedData)
+        if (inspection.action === 'recover' && local) { setDifferences(inspection.differences); setRecovery(local) }
+        else if (inspection.action === 'cleanup' && local) void manager.clearResolvedDraft(local.id, local.resolution || 'cloud-saved')
       } else {
-        if (local) setRecovery(local)
+        if (local && !isResolvedDraft(local)) setRecovery(local)
         setLoadError(describeSyncError(cloud.reason).message)
       }
     }
@@ -114,7 +121,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured) return <SetupRequired />
   if (session === undefined) return <FullScreenLoading label="正在连接云端…" />
   if (!session) return <AuthScreen />
-  if (recovery) return <div className="state-page"><Cloud size={30} /><strong>发现本机尚未同步的修改</strong><span>{new Date(recovery.updatedAt).toLocaleString('zh-CN')} 保存的本机备份与云端版本不同。请选择要保留的版本，恢复前不会覆盖云端。</span><div className="draft-recovery-actions"><button className="button primary" onClick={() => { const value = recovery.data; dataRef.current = value; setData(value); setLoadError(''); setRecovery(null); syncRef.current?.enqueue(value) }}>恢复本机修改并同步</button><button className="button secondary" onClick={() => downloadWorkbenchBackup(recovery.data)}>导出本机备份</button>{data && <button className="button secondary" onClick={() => { void removeWorkbenchDraft(recovery.userId, recovery.id).catch(() => {}); setRecovery(null) }}>保留云端版本</button>}</div></div>
+  if (recovery) return <div className="state-page"><Cloud size={30} /><strong>{data ? '本机备份与云端有内容差异' : '暂时无法核对本机备份'}</strong><span>{new Date(recovery.updatedAt).toLocaleString('zh-CN')} 的本机备份已保留。{data ? '仅检测到下列内容差异；尚未合并、删除或覆盖任何版本。' : '云端读取失败，无法比较差异。请先导出备份，再决定是否恢复。'}</span>
+    {differences.length > 0 && <ul className="recovery-differences" aria-label="本机与云端差异">{differences.map(item => <li key={item.key}><strong>{item.label}</strong><span>{item.localCount != null || item.cloudCount != null ? `本机 ${item.localCount ?? '未记录'} 条 / 云端 ${item.cloudCount ?? '未记录'} 条，内容不同` : '保存内容或字段不同'}</span></li>)}</ul>}
+    {recoveryIssue && <p className="recovery-error" role="alert">{recoveryIssue}</p>}
+    <div className="draft-recovery-actions"><button className="button primary" disabled={resolving} onClick={() => { if (!window.confirm('恢复会用这份本机备份替换云端工作台内容。请确认已核对差异，建议先导出备份。确定恢复吗？')) return; const value = recovery.data; dataRef.current = value; setData(value); setLoadError(''); setRecovery(null); syncRef.current?.enqueue(value) }}>恢复本机修改并同步</button><button className="button secondary" onClick={() => downloadWorkbenchBackup(recovery.data)}>导出本机备份</button>{data && <button className="button secondary" disabled={resolving} onClick={async () => { setResolving(true); setRecoveryIssue(''); const resolved = await syncRef.current?.clearResolvedDraft(recovery.id, 'kept-cloud'); if (resolved) setRecovery(null); else setRecoveryIssue('无法记录选择或清理本机备份，备份仍保留。请导出后重试，不会悄悄丢弃修改。'); setResolving(false) }}>{resolving ? '正在记录选择…' : '保留云端并清理本机备份'}</button>}</div></div>
   if (loadError) return <StateScreen title="无法读取云端数据" message={loadError} action="重新加载" onAction={() => window.location.reload()} />
   if (!data) return <FullScreenLoading label="正在同步工作台数据…" />
 
@@ -127,6 +137,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     syncError: syncState.error?.message || '',
     syncErrorDetail: syncState.error?.detail || '',
     backupError: syncState.backupError,
+    cleanupError: syncState.cleanupError || '',
     retrySync: () => syncRef.current?.retry(),
   }
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>

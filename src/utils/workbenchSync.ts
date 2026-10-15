@@ -1,9 +1,11 @@
 export type SyncFailure = { message: string; detail: string; retryable: boolean }
-export type SyncState = { status: 'saved' | 'saving' | 'error'; error: SyncFailure | null; backupError: string }
-export type PendingDraft<T> = { id: string; userId: string; updatedAt: string; data: T }
+export type SyncState = { status: 'saved' | 'saving' | 'error'; error: SyncFailure | null; backupError: string; cleanupError?: string }
+export type DraftResolution = 'cloud-saved' | 'kept-cloud'
+export type PendingDraft<T> = { id: string; userId: string; updatedAt: string; data: T; resolution?: DraftResolution }
 export type DraftStorage<T> = {
   write: (draft: PendingDraft<T>) => Promise<void>
   remove: (userId: string, id: string) => Promise<void>
+  acknowledge?: (userId: string, id: string, resolution: DraftResolution) => Promise<void>
 }
 
 export function describeSyncError(error: unknown): SyncFailure {
@@ -29,15 +31,32 @@ export function createWorkbenchSync<T>(options: {
   let pending: Pending | null = null, running = false, disposed = false, timer: ReturnType<typeof setTimeout> | undefined
   let active: AbortController | null = null, backupQueue = Promise.resolve(), backupError = ''
   let state: SyncState = { status: 'saved', error: null, backupError: '' }
+  const cleanupPending = new Map<string, DraftResolution>()
+  let cleanupQueue = Promise.resolve(), cleanupError = ''
   const delays = options.retryDelays || [1000, 3000]
   const notify = (status: SyncState['status'], error: SyncFailure | null = null) => {
-    state = { status, error, backupError }
+    state = { status, error, backupError, cleanupError }
     if (!disposed) options.notify(state)
   }
   const schedule = (delay: number) => {
     if (disposed) return
     clearTimeout(timer)
     timer = setTimeout(() => { void run() }, delay)
+  }
+  function clearResolvedDraft(id: string, resolution: DraftResolution = 'cloud-saved'): Promise<boolean> {
+    cleanupPending.set(id, resolution)
+    const task = cleanupQueue.then(async () => {
+      if (disposed) return false
+      cleanupPending.set(id, resolution)
+      let acknowledged = false, removed = false
+      try { if (options.storage.acknowledge) { await options.storage.acknowledge(options.userId, id, resolution); acknowledged = true } } catch { /* Still try removal, but never pretend the choice was recorded. */ }
+      try { await options.storage.remove(options.userId, id); cleanupPending.delete(id); removed = true } catch { /* Keep the exact ID for safe retries. */ }
+      cleanupError = cleanupPending.size ? '本机备份清理未完成，备份仍保留。请重试清理；不会因此覆盖云端数据。' : ''
+      notify(state.status, state.error)
+      return acknowledged || removed
+    })
+    cleanupQueue = task.then(() => {})
+    return task
   }
   async function run() {
     if (disposed || running || !pending) return
@@ -58,7 +77,7 @@ export function createWorkbenchSync<T>(options: {
       clearTimeout(timeout)
       if (disposed) return
       if (pending?.id === current.id) pending = null
-      try { await options.storage.remove(options.userId, current.id) } catch { /* A stale recovery draft is safe; it is compared with cloud data on reopen. */ }
+      await clearResolvedDraft(current.id)
       notify(pending ? 'saving' : 'saved')
     } catch (error) {
       if (disposed) return
@@ -89,7 +108,12 @@ export function createWorkbenchSync<T>(options: {
       notify('saving')
       schedule(options.debounceMs ?? 300)
     },
-    retry() { if (pending && !disposed) { pending.attempts = 0; notify('saving'); schedule(0) } },
+    retry() {
+      if (disposed) return
+      if (pending) { pending.attempts = 0; notify('saving'); schedule(0) }
+      else for (const [id, resolution] of cleanupPending) void clearResolvedDraft(id, resolution)
+    },
+    clearResolvedDraft,
     hasPending() { return pending != null },
     getState() { return state },
     dispose() { disposed = true; clearTimeout(timer); active?.abort() },

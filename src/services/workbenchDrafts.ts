@@ -1,5 +1,5 @@
 import type { WorkbenchData } from '../types/models'
-import type { PendingDraft } from '../utils/workbenchSync'
+import type { DraftResolution, PendingDraft } from '../utils/workbenchSync'
 
 const DATABASE = 'ecom-workbench-local-drafts'
 const STORE = 'pending'
@@ -43,6 +43,23 @@ export async function removeWorkbenchDraft(userId: string, id: string): Promise<
       const store = transaction.objectStore(STORE)
       const request = store.get(userId)
       request.onsuccess = () => { if (request.result?.id === id) store.delete(userId) }
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+  } finally { database.close() }
+}
+
+// Record only a confirmed server acknowledgement or the user's explicit
+// choice, and never mark a newer pending draft that replaced this one.
+export async function acknowledgeWorkbenchDraft(userId: string, id: string, resolution: DraftResolution): Promise<void> {
+  const database = await openDatabase()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE, 'readwrite')
+      const store = transaction.objectStore(STORE)
+      const request = store.get(userId)
+      request.onsuccess = () => { if (request.result?.id === id) store.put({ ...request.result, resolution }) }
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
       transaction.onabort = () => reject(transaction.error)
