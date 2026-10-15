@@ -5,6 +5,7 @@ import { Products } from './pages/Products'
 import { Operations } from './pages/Operations'
 import { MasterData } from './pages/MasterData'
 import { ProductCosts } from './pages/ProductCosts'
+import { SkuDrafts } from './pages/SkuDrafts'
 import { PddAnalyzer } from './pages/PddAnalyzer'
 import { WorkbenchProvider } from './store/workbench'
 
@@ -13,6 +14,7 @@ export default function App() {
     <Route index element={<Dashboard />} />
     <Route path="products" element={<Products />} />
     <Route path="product-costs" element={<ProductCosts />} />
+    <Route path="sku-drafts" element={<SkuDrafts />} />
     <Route path="operations" element={<Operations />} />
     <Route path="master-data" element={<MasterData />} />
     <Route path="pdd-analyzer" element={<Navigate to="/profit-preview" replace />} />

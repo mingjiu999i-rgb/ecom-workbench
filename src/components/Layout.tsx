@@ -1,4 +1,4 @@
-import { BarChart3, Box, Boxes, Calculator, Check, ChevronRight, ClipboardList, Cloud, CloudAlert, Database, LayoutDashboard, LogOut, Menu, X } from 'lucide-react'
+import { BarChart3, Box, Boxes, Calculator, Check, ChevronRight, ClipboardList, Cloud, CloudAlert, Database, FilePenLine, LayoutDashboard, LogOut, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
@@ -8,6 +8,7 @@ import { SyncNotice } from './SyncNotice'
 const items = [
   { to: '/', label: '总览', icon: LayoutDashboard },
   { to: '/products', label: '商品管理', icon: Box },
+  { to: '/sku-drafts', label: 'SKU 草稿', icon: FilePenLine },
   { to: '/product-costs', label: '产品成本', icon: Calculator },
   { to: '/operations', label: '调整记录', icon: ClipboardList },
   { to: '/master-data', label: '基础资料', icon: Database },
