@@ -7,14 +7,15 @@ export type DraftStorage<T> = {
 }
 
 export function describeSyncError(error: unknown): SyncFailure {
-  const item = error && typeof error === 'object' ? error as { message?: string; code?: string; status?: number } : {}
+  const item = error && typeof error === 'object' ? error as { name?: string; message?: string; code?: string; status?: number } : {}
   const message = typeof item.message === 'string' ? item.message : String(error || '未知保存错误')
   const code = String(item.code || item.status || '')
   const detail = [code, message.replace(/[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}/g, '[登录凭据已隐藏]')].filter(Boolean).join(' · ').slice(0, 500)
   if (['401', 'PGRST301', 'PGRST302'].includes(code) || /jwt.*(expired|invalid)|refresh.?token/i.test(message)) return { message: '登录状态失效，云端未接受保存。请先导出未同步备份，再重新登录。', detail, retryable: false }
   if (['403', '42501'].includes(code) || /row.level security|permission denied/i.test(message)) return { message: '云端拒绝写入，账号权限校验未通过。', detail, retryable: false }
   if (['413', '54000'].includes(code) || /payload too large|request.*too large/i.test(message)) return { message: '本次数据超过云端接收限制。修改仍保留在当前页面。', detail, retryable: false }
-  if (code === '57014' || /timeout|timed out|abort/i.test(message)) return { message: '云端保存超时，待同步修改已保留。', detail, retryable: true }
+  if (code === '57014' || item.name === 'TimeoutError' || /timeout|timed out/i.test(message)) return { message: '云端保存超时，待同步修改已保留。', detail, retryable: true }
+  if (item.name === 'AbortError' || /abort/i.test(message)) return { message: '云端保存请求中断，待同步修改已保留，可重试同步。', detail, retryable: true }
   if (/fetch|network|offline|connection|load failed/i.test(message) || /^50[0234]$/.test(code)) return { message: '连接云端失败，待同步修改已保留。请检查网络后重试。', detail, retryable: true }
   return { message: '云端保存失败，待同步修改已保留。', detail, retryable: false }
 }
@@ -44,11 +45,17 @@ export function createWorkbenchSync<T>(options: {
     const current = pending
     const controller = new AbortController()
     active = controller
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30000)
+    let timeout: ReturnType<typeof setTimeout> | undefined
     let retryDelay: number | null = null
     try {
       await current.backup
+      if (disposed || pending?.id !== current.id) return
+      // IndexedDB work does not consume the upload budget. Whole-workbench
+      // snapshots can take longer than 30 seconds on a slow connection.
+      const timeoutMs = options.timeoutMs ?? 120000
+      timeout = setTimeout(() => controller.abort(new DOMException(`云端保存请求超过 ${timeoutMs} ms`, 'TimeoutError')), timeoutMs)
       await options.save(current.data, controller.signal)
+      clearTimeout(timeout)
       if (disposed) return
       if (pending?.id === current.id) pending = null
       try { await options.storage.remove(options.userId, current.id) } catch { /* A stale recovery draft is safe; it is compared with cloud data on reopen. */ }
@@ -57,7 +64,9 @@ export function createWorkbenchSync<T>(options: {
       if (disposed) return
       if (pending?.id !== current.id) notify('saving')
       else {
-        const failure = describeSyncError(error)
+        // PostgREST may wrap the fetch rejection; retain our actual timeout
+        // reason so diagnostics do not degrade to an unexplained AbortError.
+        const failure = describeSyncError(controller.signal.aborted ? controller.signal.reason : error)
         if (failure.retryable && current.attempts < delays.length) {
           retryDelay = delays[current.attempts++]
           notify('saving', failure)

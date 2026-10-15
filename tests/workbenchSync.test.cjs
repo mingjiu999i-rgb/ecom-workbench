@@ -9,6 +9,7 @@ require.extensions['.ts'] = (module, filename) => {
 const { createWorkbenchSync, describeSyncError } = require('../src/utils/workbenchSync.ts')
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 const until = async predicate => { for (let n = 0; n < 200; n++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)) } assert.fail('Sync state did not settle') }
+const flushPromises = async () => { for (let n = 0; n < 30; n++) await Promise.resolve() }
 function setup(save, overrides = {}) {
   const states = [], writes = [], removed = []
   const manager = createWorkbenchSync({
@@ -114,4 +115,97 @@ test('the sync layer passes complete financial data through by reference with no
   await until(() => manager.getState().status === 'saved')
   assert.equal(JSON.stringify(value), original)
   manager.dispose()
+})
+
+test('a slow local backup cannot expire the cloud request before it starts', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const backup = deferred(), saved = deferred()
+  let signal
+  const { manager } = setup(async (_, supplied) => { signal = supplied; await saved.promise }, {
+    timeoutMs: 20,
+    storage: { write: () => backup.promise, remove: async () => {} },
+  })
+  context.after(() => manager.dispose())
+  manager.enqueue({ value: 1 })
+  context.mock.timers.tick(0)
+  await flushPromises()
+  context.mock.timers.tick(25)
+  assert.equal(signal, undefined)
+  backup.resolve()
+  await flushPromises()
+  assert.equal(signal.aborted, false)
+  saved.resolve()
+  await flushPromises()
+  assert.equal(manager.getState().status, 'saved')
+})
+
+test('disposing during local backup never starts a cloud write afterward', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const backup = deferred()
+  let calls = 0
+  const { manager, removed } = setup(async () => { calls++ }, {
+    storage: { write: () => backup.promise, remove: async () => {} },
+  })
+  manager.enqueue({ value: 1 })
+  context.mock.timers.tick(0)
+  await flushPromises()
+  manager.dispose()
+  backup.resolve()
+  await flushPromises()
+  assert.equal(calls, 0)
+  assert.equal(removed.length, 0)
+  assert.equal(manager.hasPending(), true)
+})
+
+test('a healthy save taking over 30 seconds completes without aborting or resending', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const saved = deferred()
+  let calls = 0, signal
+  const { manager } = setup(async (_, supplied) => { calls++; signal = supplied; await saved.promise }, { timeoutMs: undefined })
+  context.after(() => manager.dispose())
+  manager.enqueue({ value: 1 })
+  context.mock.timers.tick(0)
+  await flushPromises()
+  context.mock.timers.tick(35000)
+  assert.equal(signal.aborted, false)
+  assert.equal(manager.hasPending(), true)
+  assert.equal(manager.getState().status, 'saving')
+  saved.resolve()
+  await flushPromises()
+  assert.equal(manager.getState().status, 'saved')
+  assert.equal(calls, 1)
+})
+
+test('a real request timeout has a useful reason and retains the draft for manual retry', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let signal, fail = true
+  const { manager, removed } = setup(async (_, supplied) => {
+    signal = supplied
+    // PostgREST wraps fetch aborts in a plain object instead of preserving the
+    // DOMException. Diagnostics must still retain our own timeout reason.
+    if (fail) await new Promise((_, reject) => supplied.addEventListener('abort', () => reject({ message: 'AbortError: signal is aborted without reason' }), { once: true }))
+  }, { timeoutMs: 20, retryDelays: [] })
+  context.after(() => manager.dispose())
+  manager.enqueue({ value: 1 })
+  context.mock.timers.tick(0)
+  await flushPromises()
+  context.mock.timers.tick(20)
+  await flushPromises()
+  assert.equal(signal.reason.name, 'TimeoutError')
+  assert.match(manager.getState().error.detail, /20 ms/)
+  assert.equal(manager.getState().status, 'error')
+  assert.equal(manager.hasPending(), true)
+  assert.equal(removed.length, 0)
+  fail = false
+  manager.retry()
+  context.mock.timers.tick(0)
+  await flushPromises()
+  assert.equal(manager.getState().status, 'saved')
+})
+
+test('an external abort is retryable but is not reported as a known timeout', () => {
+  const failure = describeSyncError({ message: 'AbortError: signal is aborted without reason' })
+  assert.equal(failure.retryable, true)
+  assert.match(failure.message, /中断/)
+  assert.doesNotMatch(failure.message, /超时/)
 })

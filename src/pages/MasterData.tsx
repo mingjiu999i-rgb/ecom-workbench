@@ -7,6 +7,7 @@ import type { Client, LinkStatus, Platform, Product, ProductLink, Sku, Store, St
 import { calculatedBreakEvenRoi, money, percent } from '../utils/calculations'
 import { appendSkuHistory } from '../utils/skuHistory'
 import { createSkuChangeOperations } from '../utils/skuOperations'
+import { matchBatchSkuCost } from '../utils/batchSkuMatching'
 
 type Tab = 'clients' | 'stores' | 'products' | 'links' | 'skus'
 type Draft = Partial<Client & Store & Product & ProductLink & Sku> & { platform?: Platform; status?: LinkStatus; storeStatus?: StoreStatus }
@@ -37,19 +38,13 @@ export function MasterData() {
 
   const batchCosts = data.productCosts.filter(cost => cost.productId === data.productLinks.find(link => link.id === batchLinkId)?.productId)
   const parseBatch = () => {
-    const normalize = (value: string) => value.toLowerCase().replace(/[\s【】\[\]（）()*/×]/g, '')
     const lines = batchText.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
     const parsed = lines.map(line => {
       const match = line.match(/^(.*?)(?:\t+|[,，]\s*|\s+)[¥￥]?\s*(\d+(?:\.\d+)?)\s*$/)
       if (!match) return null
       const name = match[1].trim()
       const price = Number(match[2])
-      const key = normalize(name)
-      const matches = batchCosts.filter(cost => {
-        const spec = normalize(cost.specification)
-        return spec.length >= 3 && (key.includes(spec) || spec.includes(key))
-      })
-      return { name, price, productCostId: matches.length === 1 ? matches[0].id : '' }
+      return { name, price, productCostId: matchBatchSkuCost(name, batchCosts) }
     })
     const rows = parsed.filter((row): row is BatchRow => Boolean(row?.name && Number.isFinite(row.price) && row.price > 0))
     const invalidCount = lines.length - rows.length
