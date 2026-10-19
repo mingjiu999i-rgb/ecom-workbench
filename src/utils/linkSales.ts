@@ -77,16 +77,26 @@ export function summarizeLinkSales(data: WorkbenchData, filter: Filter = {}) {
   const inDate = (date: string) => (!filter.start || date >= filter.start) && (!filter.end || date <= filter.end)
   const search = (row: { goodsId: string; name: string }) => `${row.goodsId} ${row.name}`.toLowerCase().includes((filter.query || '').trim().toLowerCase())
   const costs = new Map((data.orderAccountingLedgers || []).flatMap(ledger => ledger.orders.map(order => [JSON.stringify([ledger.storeId, order.id]), order] as const)))
+  // Read-only eligibility: a later after-sale-only import must also update this
+  // analysis. Refund amounts never participate in listing profit calculations.
+  const unshippedRefunds = new Set((data.orderAccountingLedgers || []).flatMap(ledger => ledger.refunds
+    .filter(refund => refund.success && refund.stage === '未发货')
+    .map(refund => JSON.stringify([ledger.storeId, refund.orderId]))))
   const promos = new Map(getLinkPromotions(data).map(row => [linkKey(row.storeId, row.goodsId, row.date), row.amount]))
   const dailyMap = new Map<string, LinkSalesMetric>()
   const pending: LinkSalesOrder[] = []
   for (const row of getLinkSalesOrders(data)) {
     if (!stores.has(row.storeId) || !search(row) || excluded(row)) continue
     if (row.date && !inDate(row.date)) continue
-    if (!row.date || !row.goodsId || row.conflict || !paid(row)) { pending.push(row); continue }
+    const unshippedRefund = unshippedRefunds.has(orderKey(row)) || row.status.includes('未发货') && row.status.includes('退款成功')
+    if (!row.date || !row.goodsId || row.conflict || !paid(row) && !unshippedRefund) { if (!unshippedRefund) pending.push(row); continue }
     const key = linkKey(row.storeId, row.goodsId, row.date)
     const promotion = promos.get(key) ?? null
     const metric = dailyMap.get(key) || { key, storeId: row.storeId, goodsId: row.goodsId, name: row.name, date: row.date, days: 1, orders: 0, quantity: 0, sales: 0, cost: 0, promotion, missingCost: 0, missingPromotion: promotion == null ? 1 : 0, profit: null, margin: null }
+    // Keep the known listing/date for daily ad entry, even when all its paid
+    // orders were refunded before shipment. Their contribution is exactly zero;
+    // advertising spend is retained and can still produce a loss.
+    if (unshippedRefund) { dailyMap.set(key, metric); continue }
     const snapshot = costs.get(orderKey(row))
     const unitCost = snapshot && snapshot.supplement === row.supplement && nonnegative(snapshot.unitCost) ? snapshot.unitCost : null
     const cost = row.supplement ? 0 : unitCost != null && row.quantity != null && Number.isInteger(row.quantity) ? round(unitCost * row.quantity) : null
@@ -115,6 +125,6 @@ export function summarizeLinkSales(data: WorkbenchData, filter: Filter = {}) {
     }) : { ...day, key, date: '' })
   }
   const indexed = new Set(getLinkSalesOrders(data).map(orderKey))
-  const unindexed = (data.orderAccountingLedgers || []).filter(ledger => stores.has(ledger.storeId)).reduce((count, ledger) => count + ledger.orders.filter(order => !order.cancelled && inDate(order.date) && !indexed.has(JSON.stringify([ledger.storeId, order.id]))).length, 0)
+  const unindexed = (data.orderAccountingLedgers || []).filter(ledger => stores.has(ledger.storeId)).reduce((count, ledger) => count + ledger.orders.filter(order => !order.cancelled && !unshippedRefunds.has(JSON.stringify([ledger.storeId, order.id])) && inDate(order.date) && !indexed.has(JSON.stringify([ledger.storeId, order.id]))).length, 0)
   return { daily, summary: [...summaryMap.values()].sort((a, b) => a.storeId.localeCompare(b.storeId) || a.goodsId.localeCompare(b.goodsId)), pending, unindexed }
 }

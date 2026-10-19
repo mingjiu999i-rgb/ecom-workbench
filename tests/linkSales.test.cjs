@@ -33,16 +33,17 @@ test('null ads versus explicit zero and deletion remain different', () => {
   assert.equal(summarizeLinkSales(ad(data, 0)).summary[0].profit, 6)
   assert.equal(summarizeLinkSales(ad(ad(data, 0), null)).summary[0].profit, null)
 })
-test('uses original cost snapshot rather than edited cost library; does not read refunds', () => {
+test('uses original cost snapshot rather than edited cost library; never deducts refund amounts', () => {
   const data = imported(); data.productCosts = [{ totalCost: 99 }]
   const metric = summarizeLinkSales(ad(data, 2)).summary[0]
   assert.equal(metric.sales, 10); assert.equal(metric.cost, 4); assert.equal(metric.profit, 4); assert.equal(metric.margin, .4)
-  data.orderAccountingLedgers[0].refunds = [{ amount: 999999, success: true, stage: '未发货' }]
+  data.orderAccountingLedgers[0].refunds = [{ orderId: 'order-1', amount: 999999, success: true, stage: '已发货' }]
   assert.deepEqual(summarizeLinkSales(ad(data, 2)).summary[0], metric)
 })
-test('no refund deductions even if paid order status indicates refunded', () => {
+test('unshipped successful refund contributes no sales, units, order count or cost', () => {
   const data = imported(base(), [row({ '订单状态': '未发货，退款成功' })])
-  assert.equal(summarizeLinkSales(ad(data, 0)).summary[0].profit, 6)
+  const metric = summarizeLinkSales(ad(data, 0)).summary[0]
+  assert.equal(metric.orders, 0); assert.equal(metric.quantity, 0); assert.equal(metric.sales, 0); assert.equal(metric.cost, 0); assert.equal(metric.profit, 0)
 })
 test('missing cost or amount never becomes zero or a partial total', () => {
   const data = imported(base(), [row(), row({ '订单号': 'order-2', '商家实收金额(元)': '' })])
@@ -101,4 +102,59 @@ test('saved advertising is retained even when all source orders later become can
   const data = imported(ad(imported(), 2), [row({ '订单状态': '已取消' })])
   const metric = summarizeLinkSales(data).summary[0]
   assert.equal(metric.promotion, 2); assert.equal(metric.sales, null); assert.equal(metric.profit, null)
+})
+test('after-sale-only refresh excludes unshipped refunds from existing listing history without reimporting orders', () => {
+  const data = imported()
+  data.orderAccountingLedgers[0].refunds = [{ id: 'refund', orderId: 'order-1', success: true, stage: '未发货', amount: 1 }]
+  const before = JSON.stringify(data)
+  const metric = summarizeLinkSales(ad(data, 2)).summary[0]
+  assert.equal(metric.quantity, 0); assert.equal(metric.sales, 0); assert.equal(metric.cost, 0); assert.equal(metric.profit, -2)
+  assert.equal(JSON.stringify(data), before)
+  data.orderAccountingLedgers[0].refunds[0].amount = 99999
+  assert.deepEqual(summarizeLinkSales(ad(data, 2)).summary[0], metric)
+})
+test('mixed unshipped/shipped refunds exclude only unshipped rows and preserve original shipped costs', () => {
+  const data = imported(base(), [row({ '订单状态': '未发货，退款成功' }), row({ '订单号': 'order-2', '订单状态': '已发货，退款成功', '商家实收金额(元)': '20', '商品数量(件)': '2' })])
+  data.orderAccountingLedgers[0].orders.push({ id: 'order-2', date: '2026-10-14', unitCost: 4, supplement: false })
+  data.orderAccountingLedgers[0].refunds = [{ orderId: 'order-2', success: true, stage: '已发货', amount: 20 }]
+  const metric = summarizeLinkSales(ad(data, 3)).summary[0]
+  assert.equal(metric.orders, 1); assert.equal(metric.quantity, 2); assert.equal(metric.sales, 20); assert.equal(metric.cost, 8); assert.equal(metric.profit, 9)
+})
+test('pending/failed unshipped refunds never remove valid sales', () => {
+  const data = imported(base(), [row({ '订单状态': '未发货，退款中' })])
+  data.orderAccountingLedgers[0].refunds = [{ orderId: 'order-1', success: false, stage: '未发货', amount: 10 }]
+  assert.equal(summarizeLinkSales(ad(data, 0)).summary[0].sales, 10)
+  assert.equal(summarizeLinkSales(ad(data, 0)).summary[0].cost, 4)
+})
+test('unshipped refund exclusion is scoped by store plus full order ID', () => {
+  const data = imported(imported(), [row()], 'b')
+  data.orderAccountingLedgers[0].refunds = [{ orderId: 'order-1', success: true, stage: '未发货', amount: 10 }]
+  const report = summarizeLinkSales(data)
+  assert.equal(report.summary.find(row => row.storeId === 'a').sales, 0)
+  assert.equal(report.summary.find(row => row.storeId === 'b').sales, 10)
+  assert.equal(report.summary.find(row => row.storeId === 'b').cost, null)
+})
+test('all-unshipped-refund date remains available for ad entry, blank ads remain unknown', () => {
+  const data = imported(base(), [row({ '订单状态': '未发货，退款成功', '商家实收金额(元)': '', '商品数量(件)': '' })])
+  data.orderAccountingLedgers[0].orders[0].unitCost = null
+  const report = summarizeLinkSales(data)
+  assert.equal(report.daily[0].date, '2026-10-14'); assert.equal(report.daily[0].orders, 0)
+  assert.equal(report.daily[0].missingCost, 0); assert.equal(report.daily[0].sales, 0); assert.equal(report.daily[0].cost, 0)
+  assert.equal(report.daily[0].promotion, null); assert.equal(report.daily[0].profit, null)
+})
+test('period sums preserve ad spend on excluded-only days and reconcile with daily rows', () => {
+  const data = imported(base(), [row({ '订单状态': '未发货，退款成功' }), row({ '订单号': 'order-2', '订单成交时间': '2026-10-15' })])
+  data.orderAccountingLedgers[0].orders.push({ id: 'order-2', date: '2026-10-15', unitCost: 4, supplement: false })
+  const report = summarizeLinkSales(ad(ad(data, 2), 3, '2026-10-15'))
+  assert.equal(report.summary[0].quantity, 1); assert.equal(report.summary[0].orders, 1)
+  assert.equal(report.summary[0].sales, 10); assert.equal(report.summary[0].cost, 4); assert.equal(report.summary[0].promotion, 5); assert.equal(report.summary[0].profit, 1)
+  assert.equal(report.daily.reduce((n, row) => n + row.profit, 0), report.summary[0].profit)
+})
+test('excluded refunds do not invent listing/date mappings or require irrelevant historical mappings', () => {
+  const data = imported(base(), [row({ '订单状态': '未发货，退款成功', '订单成交时间': '', '商品id': '' })])
+  data.orderAccountingLedgers[0].refunds = [{ orderId: 'order-1', success: true, stage: '未发货', amount: 10 }]
+  const report = summarizeLinkSales(data)
+  assert.equal(report.daily.length, 0); assert.equal(report.unindexed, 0)
+  delete data.linkSalesOrders
+  assert.equal(summarizeLinkSales(data).unindexed, 0)
 })
