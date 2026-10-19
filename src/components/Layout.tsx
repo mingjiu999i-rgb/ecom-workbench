@@ -20,7 +20,7 @@ export function Layout() {
   const [open, setOpen] = useState(false)
   const { userEmail, signOut, syncStatus } = useWorkbench()
   const { pathname } = useLocation()
-  const currentPage = items.find(item => item.to === pathname)?.label || '总览'
+  const currentPage = items.find(item => item.to === pathname)?.label || (pathname === '/store-business-reset' ? '单店经营数据重置' : '总览')
   return <div className="app-shell">
     <OverviewRefundTracker />
     <button className="mobile-menu" onClick={() => setOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
