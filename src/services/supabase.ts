@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { initialData } from '../data/template'
 import type { WorkbenchData } from '../types/models'
 import { normalizeCollectionRefunds } from '../utils/collectionRefunds'
+import { buildWorkbenchPatch } from '../utils/workbenchPatch'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -9,6 +10,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undef
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-anon-key')
 const cloneInitialData = (): WorkbenchData => JSON.parse(JSON.stringify(initialData)) as WorkbenchData
+const storedSnapshots = new Map<string, WorkbenchData>()
 
 const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   const hasProductCosts = Array.isArray(value.productCosts)
@@ -57,6 +59,7 @@ export async function loadWorkbenchSnapshot(userId: string): Promise<{ data: Wor
   if (error) throw error
   if (data?.data) {
     const storedData = data.data as WorkbenchData
+    storedSnapshots.set(userId, storedData)
     return { data: normalizeWorkbench(storedData), storedData }
   }
   const initial = cloneInitialData()
@@ -69,7 +72,19 @@ export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
 }
 
 export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
+  const previous = storedSnapshots.get(userId)
+  if (previous) {
+    const patch = buildWorkbenchPatch(previous, data)
+    if (!patch.changed) return
+    const request = supabase.rpc('save_workbench_patch', { p_updates: patch.updates, p_remove: patch.removed })
+    const { error } = await (signal ? request.abortSignal(signal) : request)
+    if (!error) { storedSnapshots.set(userId, data); return }
+    // During staged rollout, only a missing RPC may use the legacy save path.
+    // A real database error must remain visible and keep the previous baseline.
+    if (error.code !== 'PGRST202') throw error
+  }
   const request = supabase.from('workbench_documents').upsert({ user_id: userId, data, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
   const { error } = await (signal ? request.abortSignal(signal) : request)
   if (error) throw error
+  storedSnapshots.set(userId, data)
 }

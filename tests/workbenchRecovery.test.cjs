@@ -46,7 +46,7 @@ function serviceFixture(raw) {
   const source = fs.readFileSync(require.resolve('../src/services/supabase.ts'), 'utf8').replace(/import\.meta\.env/g, '({})')
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const result = { exports: {} }
-  const dependency = name => name === '@supabase/supabase-js' ? { createClient: () => client } : name === '../data/template' ? { initialData: initial } : name === '../utils/collectionRefunds' ? require('../src/utils/collectionRefunds.ts') : require(name)
+  const dependency = name => name === '@supabase/supabase-js' ? { createClient: () => client } : name === '../data/template' ? { initialData: initial } : name.startsWith('../utils/') ? require('../src/utils/' + name.slice('../utils/'.length) + '.ts') : require(name)
   new Function('require', 'module', 'exports', output)(dependency, result, result.exports)
   return { service: result.exports, writes }
 }
