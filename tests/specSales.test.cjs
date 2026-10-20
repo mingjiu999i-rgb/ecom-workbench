@@ -40,6 +40,55 @@ test('different codes never collapse and a shared code with differing labels is 
   assert.equal(result.rows.filter(r => r.conflictingSpecification).length, 2)
   assert(result.warnings.some(text => text.includes('同一编码')))
 })
+
+test('screenshot duplicate specs merge for export: JDG2Z 22+1=23 and JDG3D 45+1=46', () => {
+  const data = imported([
+    row({ '订单号': '1', '商家编码-规格维度': 'JDG2Z', '商品规格': '2斤中果（100-150g）', '商品数量(件)': '22' }),
+    row({ '订单号': '2', '商家编码-规格维度': 'JDG2Z', '商品规格': '2斤中果 (100-150g)', '商品数量(件)': '1' }),
+    row({ '订单号': '3', '商家编码-规格维度': 'JDG3D', '商品规格': '3斤大果（150-200g）', '商品数量(件)': '45' }),
+    row({ '订单号': '4', '商家编码-规格维度': 'JDG3D', '商品规格': '３斤大果【１５０-２００Ｇ】', '商品数量(件)': '1' }),
+  ])
+  const before = JSON.stringify(data)
+  const result = report(data)
+  assert.deepEqual(result.rows.map(r => [r.skuCode, r.quantity]), [['JDG2Z', 23], ['JDG3D', 46]])
+  assert.equal(result.warnings.length, 0)
+  const workbook = createSettlementWorkbook(data, { clientId: 'c' })
+  const grid = XLSX.utils.sheet_to_json(workbook.Sheets['总览'], { header: 1, raw: true })
+  const rows = grid.filter(r => ['JDG2Z', 'JDG3D'].includes(r[1]))
+  assert.deepEqual(rows.map(r => [r[1], r[9]]), [['JDG2Z', 23], ['JDG3D', 46]])
+  assert.equal(JSON.stringify(data), before)
+})
+
+test('cosmetic merging still isolates stores, SKU identifiers and substantive specification differences', () => {
+  let data = imported([
+    row(), row({ '订单号': 'different-code', '商家编码-规格维度': '123' }),
+    row({ '订单号': 'different-weight', '商品规格': '大果 6斤' }),
+    row({ '订单号': 'range', '商品规格': '大果 (100-150g)' }),
+    row({ '订单号': 'other-range', '商品规格': '大果 (150-200g)' }),
+    row({ '订单号': 'operator', '商品规格': '大果 1+1斤' }),
+    row({ '订单号': 'no-operator', '商品规格': '大果 11斤' }),
+  ])
+  data = imported([row()], 'b', data)
+  assert.equal(report(data).rows.length, 8)
+  assert(report(data).rows.every(r => r.quantity === 2))
+})
+
+test('merged export keeps unknown quantities unknown and uses selected date range only', () => {
+  const data = imported([
+    row(), row({ '订单号': 'missing', '商品规格': '大果　５斤', '商品数量(件)': '' }),
+    row({ '订单号': 'later', '商品规格': '大果5斤', '订单成交时间': '2026-10-20', '商品数量(件)': '99' }),
+  ])
+  const result = summarizeSpecSales(data, { clientId: 'c', startDate: '2026-10-19', endDate: '2026-10-19' })
+  assert.equal(result.rows.length, 1)
+  assert.equal(result.rows[0].quantity, null)
+  assert.equal(result.complete, false)
+})
+
+test('page no longer renders the added spec block and preserves the original SKU cost matching section', () => {
+  const analyzer = fs.readFileSync(require('node:path').join(__dirname, '../src/pages/PddAnalyzer.tsx'), 'utf8')
+  assert(!analyzer.includes('SpecificationSales'))
+  assert(analyzer.includes('SKU 成本匹配'))
+})
 test('excludes cancellation, unpaid, unshipped successful refunds and supplement only', () => {
   const statuses = ['已取消', '待付款', '未付款', '待支付', '未发货，退款成功', '已发货，退款成功', '未发货，退款中']
   const data = imported([...statuses.map((status, i) => row({ '订单号': String(i), '订单状态': status })), row({ '订单号': 'supplement', '商品': '补收差价' })])

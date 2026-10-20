@@ -8,6 +8,13 @@ export type SpecSalesRow = {
 }
 export const specSalesBasis = '按订单支付日期统计件数；取消、未付款、未发货退款成功及补差价不计入，已发货退款保留销量。'
 
+// Export presentation only: unify spacing, full-width characters and bracket
+// styles. Keep weights, grades, ranges and operators so different goods never
+// collapse merely because they share a merchant code. Do not reuse this key in
+// cost matching, order imports, ledger deduplication or settlement calculations.
+const specificationKey = (value: string) => value.normalize('NFKC').toLowerCase()
+  .replace(/\s/g, '').replace(/[【\[]/g, '(').replace(/[】\]]/g, ')')
+
 // Read-only analysis of the existing independent order index. Never infer SKU
 // metadata from today's cost library or change any settlement records.
 export function summarizeSpecSales(data: WorkbenchData, filter: SpecSalesFilter = {}) {
@@ -42,17 +49,19 @@ export function summarizeSpecSales(data: WorkbenchData, filter: SpecSalesFilter 
     if (!order.skuCode?.trim() || !order.specification?.trim()) {
       issue(order.storeId, '缺少规格维度编码或售卖规格，需补导原订单报表'); continue
     }
-    const key = JSON.stringify([order.storeId, order.skuCode, order.specification])
-    const group = groups.get(key) || { key, storeId: order.storeId, skuCode: order.skuCode, specification: order.specification, quantity: 0, conflictingSpecification: false }
+    const skuCode = order.skuCode.trim()
+    const normalizedSpecification = specificationKey(order.specification)
+    const key = JSON.stringify([order.storeId, skuCode, normalizedSpecification])
+    const group = groups.get(key) || { key, storeId: order.storeId, skuCode, specification: order.specification.trim(), quantity: 0, conflictingSpecification: false }
     const quantityKnown = typeof order.quantity === 'number' && Number.isSafeInteger(order.quantity) && order.quantity >= 0
     if (!dateKnown) issue(order.storeId, '缺少有效支付日期，无法确定统计范围')
     if (!quantityKnown) issue(order.storeId, '缺少有效整数件数')
     group.quantity = !dateKnown || !quantityKnown || group.quantity === null ? null : group.quantity + order.quantity!
     if (group.quantity !== null && !Number.isSafeInteger(group.quantity)) { group.quantity = null; issue(order.storeId, '件数超出可精确统计范围') }
     groups.set(key, group)
-    const codeKey = JSON.stringify([order.storeId, order.skuCode])
+    const codeKey = JSON.stringify([order.storeId, skuCode])
     const specifications = codes.get(codeKey) || new Set<string>()
-    specifications.add(order.specification); codes.set(codeKey, specifications)
+    specifications.add(normalizedSpecification); codes.set(codeKey, specifications)
   }
   const ledgerDates = new Set<string>()
   for (const ledger of data.orderAccountingLedgers || []) {
