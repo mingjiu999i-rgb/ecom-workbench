@@ -166,7 +166,7 @@ test('all clients export separate overview, product preview and store details wi
   assert.equal(preview.D5.v, 200)
   assert.equal(preview.D10.v, baseProfit.estimatedProfit * 2)
   assert.equal(preview.D12.v, baseProfit.estimatedProfit / baseProfit.amount)
-  assert.equal(workbook.Sheets['总览']['!ref'], 'A1:L10')
+  assert.equal(workbook.Sheets['总览']['!ref'], 'A1:L18') // Specification analysis is appended below the unchanged A1:L10 financial canvas.
   assert(!Object.values(workbook.Sheets['总览']).some(cell => cell?.v === '产品利润汇总'))
   const other = createSettlementWorkbook(data, { clientId: 'other' })
   assert.deepEqual(other.SheetNames, ['总览', '产品预览', '另一甲方店回款'])

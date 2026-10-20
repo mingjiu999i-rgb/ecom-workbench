@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import * as XLSX from '@e965/xlsx'
 import { Modal } from '../components/Overlay'
+import { SpecificationSales } from '../components/SpecificationSales'
 import { useWorkbench } from '../store/workbench'
 import type { CollectionRecord, ProfitRecord } from '../types/models'
 import { isSupplementOrder, normalizeSpecification, resolveProductCost, type ProductCostMatch } from '../utils/orderCostMatching'
@@ -319,6 +320,7 @@ export function PddAnalyzer() {
     {importReady && linkSalesBatch.length > 0 && <div className="pdd-message"><span>已额外记录本次订单的商品 ID；不扣退款的链接利润请到 <Link to="/link-profit">商品 ID 盈亏</Link> 填写每日推广费。</span></div>}
     <section className="panel pdd-import profit-import"><div><div className="form-grid"><label className="field field-full"><span>导出甲方</span><select value={exportClientId} onChange={event => setExportClientId(event.target.value)}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label className="field"><span>开始日期</span><input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><label className="field"><span>结束日期</span><input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></label></div><p>所有甲方统一导出“总览 + 产品预览 + 每个店铺独立回款明细”，可在各工作表分别隐藏行列；日期留空表示全部。{exportValidation.blocking.length ? ` 当前无法导出：${exportValidation.blocking.join('；')}` : exportValidation.warnings.length ? ' 当前有数据提醒，点击导出后可选择重新导入或忽略提醒继续。' : exportRecordCount ? ` 已找到 ${exportRecordCount} 条回款记录。` : ''}</p></div><button className="button primary" disabled={!exportClientId || !exportRecordCount} onClick={exportResult}><Download size={16} />导出甲方结算</button></section>
     {exportValidation.warnings.length > 0 && <div className="pdd-message warning"><strong>数据提醒</strong><span>{exportValidation.warnings.join('；')}。仍可点击“导出甲方结算”选择忽略并继续。</span></div>}
+    <SpecificationSales data={data} {...exportOptions} />
     {importReady && (accounting.unmatchedRefunds > 0 || accounting.unmatchedFunds > 0) && <div className="pdd-message warning"><strong>有记录待回填</strong><span>{accounting.unmatchedRefunds} 条成功售后、{accounting.unmatchedFunds} 条资金流水尚未找到原订单；已保存计算索引，补导对应历史订单后会自动回填，不会计入发生当天。</span></div>}
     {importReady && accounting.blockedDates.length > 0 && <div className="pdd-message warning"><strong>历史索引待初始化</strong><span>{accounting.blockedDates.join('、')} 的旧数据只有每日汇总。请一次性补导这些日期的完整订单、售后和资金报表；建立索引后无需重复导入固定报表，现有汇总暂时保留。</span></div>}
     {importReady && accounting.pendingRefundFunds > 0 && <div className="pdd-message warning"><strong>退款资金待补齐</strong><span>{accounting.pendingRefundFunds} 个已发货退款订单尚无对应退款资金流水。退款金额以实际资金为准，补导流水后自动回填。</span></div>}

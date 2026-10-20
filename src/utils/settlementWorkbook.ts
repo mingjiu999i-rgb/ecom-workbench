@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx-js-style'
 import type { CollectionRecord, ProfitRecord, Store, WorkbenchData } from '../types/models'
 import { normalizeCollectionRefunds } from './collectionRefunds'
+import { appendSpecSales } from './specSalesWorkbook'
 
 type CellValue = string | number | Date | null
 type CollectionTotal = Omit<CollectionRecord, 'id' | 'storeId' | 'date' | 'updatedAt'> & { date: string }
@@ -337,6 +338,7 @@ export function createSettlementWorkbook(data: WorkbenchData, options: Settlemen
   const endDate = options.endDate || dates[dates.length - 1] || '最新'
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, buildSummarySheet(data, options.clientId, stores, collections, profits, startDate, endDate), '总览')
+  appendSpecSales(workbook.Sheets['总览'], data, options)
   XLSX.utils.book_append_sheet(workbook, buildProductPreviewSheet(data, profits), '产品预览')
   const used = new Set(workbook.SheetNames)
   stores.forEach(store => XLSX.utils.book_append_sheet(workbook, buildDetailSheet(store, collections.filter(row => row.storeId === store.id), startDate, endDate), safeSheetName(`${store.name}回款`, used)))

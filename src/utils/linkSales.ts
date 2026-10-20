@@ -5,6 +5,7 @@ import { isSupplementOrder } from './orderCostMatching'
 export type LinkSalesOrder = {
   storeId: string; orderId: string; goodsId: string; name: string; date: string | null
   status: string; receipt: number | null; quantity: number | null; supplement: boolean; conflict?: boolean
+  skuCode?: string; specification?: string
 }
 export type LinkPromotion = { storeId: string; goodsId: string; date: string; amount: number }
 type LinkData = WorkbenchData & { linkSalesOrders?: LinkSalesOrder[]; linkSalesPromotions?: LinkPromotion[] }
@@ -31,6 +32,8 @@ export function parseLinkSalesRows(storeId: string, rows: Record<string, unknown
     storeId, orderId: text(row['订单号']), goodsId: text(row['商品id'] || row['商品ID']), name: text(row['商品']),
     date: linkDate(row['支付时间'] || row['订单成交时间']), status: text(row['订单状态']),
     receipt: linkNumber(row['商家实收金额(元)']), quantity: linkNumber(row['商品数量(件)']),
+    ...(Object.hasOwn(row, '商家编码-规格维度') ? { skuCode: text(row['商家编码-规格维度']) } : {}),
+    ...(Object.hasOwn(row, '商品规格') ? { specification: text(row['商品规格']) } : {}),
     supplement: isSupplementOrder({ product: text(row['商品']), specification: text(row['商品规格']), skuCode: text(row['商家编码-规格维度']) }),
   }))
 }
@@ -43,7 +46,10 @@ export function mergeLinkSalesOrders(data: WorkbenchData, incoming: LinkSalesOrd
     if (!row.storeId || !row.orderId) continue
     const key = orderKey(row), previous = rows.get(key)
     const conflict = previous?.conflict || Boolean(previous?.goodsId && row.goodsId && previous.goodsId !== row.goodsId)
-    const next = { ...row, goodsId: previous?.goodsId || row.goodsId, ...(conflict ? { conflict: true } : {}) }
+    const next = { ...row, goodsId: previous?.goodsId || row.goodsId, ...(conflict ? { conflict: true } : {}),
+      ...(row.skuCode === undefined && previous?.skuCode !== undefined ? { skuCode: previous.skuCode } : {}),
+      ...(row.specification === undefined && previous?.specification !== undefined ? { specification: previous.specification } : {}),
+    }
     if (JSON.stringify(previous) !== JSON.stringify(next)) { rows.set(key, next); changed = true }
   }
   return changed ? { ...data, linkSalesOrders: [...rows.values()] } as LinkData : data
