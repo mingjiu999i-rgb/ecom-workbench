@@ -16,9 +16,11 @@ export function describeSyncError(error: unknown): SyncFailure {
   if (['401', 'PGRST301', 'PGRST302'].includes(code) || /jwt.*(expired|invalid)|refresh.?token/i.test(message)) return { message: '登录状态失效，云端未接受保存。请先导出未同步备份，再重新登录。', detail, retryable: false }
   if (['403', '42501'].includes(code) || /row.level security|permission denied/i.test(message)) return { message: '云端拒绝写入，账号权限校验未通过。', detail, retryable: false }
   if (['413', '54000'].includes(code) || /payload too large|request.*too large/i.test(message)) return { message: '本次数据超过云端接收限制。修改仍保留在当前页面。', detail, retryable: false }
+  if (code === '40001') return { message: '云端已有更新，当前修改和本机备份已保留。请导出备份后核对两个版本。', detail, retryable: false }
   if (code === '57014' || item.name === 'TimeoutError' || /timeout|timed out/i.test(message)) return { message: '云端保存超时，待同步修改已保留。', detail, retryable: true }
   if (item.name === 'AbortError' || /abort/i.test(message)) return { message: '云端保存请求中断，待同步修改已保留，可重试同步。', detail, retryable: true }
-  if (/fetch|network|offline|connection|load failed/i.test(message) || /^50[0234]$/.test(code)) return { message: '连接云端失败，待同步修改已保留。请检查网络后重试。', detail, retryable: true }
+  if (/^5\d\d$/.test(code) || /upstream connect|remote connection failure/i.test(message)) return { message: '云端服务暂时不可用，待同步修改已保留。', detail, retryable: true }
+  if (/fetch|network|offline|connection|load failed/i.test(message)) return { message: '连接云端失败，待同步修改已保留。', detail, retryable: true }
   return { message: '云端保存失败，待同步修改已保留。', detail, retryable: false }
 }
 

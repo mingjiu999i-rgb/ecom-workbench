@@ -6,7 +6,7 @@ import type { WorkbenchData } from '../types/models'
 import { isActiveProductLink } from '../utils/selectors'
 import { acknowledgeWorkbenchDraft, readWorkbenchDraft, removeWorkbenchDraft, writeWorkbenchDraft } from '../services/workbenchDrafts'
 import { createWorkbenchSync, describeSyncError, type PendingDraft, type SyncState } from '../utils/workbenchSync'
-import { inspectWorkbenchRecovery, isResolvedDraft, type recoveryDifferences } from '../utils/workbenchRecovery'
+import { inspectWorkbenchRecovery, isResolvedDraft, sameStoredDocument, type recoveryDifferences } from '../utils/workbenchRecovery'
 
 type SyncStatus = 'saved' | 'saving' | 'error'
 interface WorkbenchContextValue {
@@ -92,7 +92,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     const current = dataRef.current
     if (!current || !syncRef.current) return
     const next = recipe(current)
-    if (next === current) return
+    if (next === current || sameStoredDocument(current, next)) return
     dataRef.current = next
     setData(next)
     syncRef.current.enqueue(next)

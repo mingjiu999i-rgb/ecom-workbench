@@ -3,6 +3,7 @@ import { initialData } from '../data/template'
 import type { WorkbenchData } from '../types/models'
 import { normalizeCollectionRefunds } from '../utils/collectionRefunds'
 import { buildWorkbenchPatch } from '../utils/workbenchPatch'
+import { buildWorkbenchDelta } from '../utils/workbenchDelta'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -11,6 +12,8 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-anon-key')
 const cloneInitialData = (): WorkbenchData => JSON.parse(JSON.stringify(initialData)) as WorkbenchData
 const storedSnapshots = new Map<string, WorkbenchData>()
+const storedRevisions = new Map<string, string>()
+const requestIds = new WeakMap<WorkbenchData, string>()
 
 const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   const hasProductCosts = Array.isArray(value.productCosts)
@@ -55,11 +58,13 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
 }
 
 export async function loadWorkbenchSnapshot(userId: string): Promise<{ data: WorkbenchData; storedData: WorkbenchData }> {
-  const { data, error } = await supabase.from('workbench_documents').select('data').eq('user_id', userId).maybeSingle()
+  const { data, error } = await supabase.from('workbench_documents').select('data, updated_at').eq('user_id', userId).maybeSingle()
   if (error) throw error
   if (data?.data) {
     const storedData = data.data as WorkbenchData
     storedSnapshots.set(userId, storedData)
+    if (typeof data.updated_at === 'string') storedRevisions.set(userId, data.updated_at)
+    else storedRevisions.delete(userId)
     return { data: normalizeWorkbench(storedData), storedData }
   }
   const initial = cloneInitialData()
@@ -72,19 +77,55 @@ export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
 }
 
 export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
-  const previous = storedSnapshots.get(userId)
+  let previous = storedSnapshots.get(userId)
+  if (!previous) {
+    // Recovery after a failed initial read must establish a cloud baseline;
+    // it must never turn an existing 26 MB document into a blind full upsert.
+    const request = supabase.from('workbench_documents').select('data, updated_at').eq('user_id', userId)
+    const { data: document, error } = await (signal ? request.abortSignal(signal) : request).maybeSingle()
+    if (error) throw error
+    if (document?.data) {
+      previous = document.data as WorkbenchData
+      storedSnapshots.set(userId, previous)
+      if (typeof document.updated_at === 'string') storedRevisions.set(userId, document.updated_at)
+    }
+  }
   if (previous) {
+    const revision = storedRevisions.get(userId)
+    if (revision) {
+      const delta = buildWorkbenchDelta(previous, data)
+      if (!delta) return
+      let requestId = requestIds.get(data)
+      if (!requestId) { requestId = crypto.randomUUID(); requestIds.set(data, requestId) }
+      const request = supabase.rpc('save_workbench_delta', { p_delta: delta, p_expected_updated_at: revision, p_request_id: requestId })
+      const { data: acknowledgement, error } = await (signal ? request.abortSignal(signal) : request)
+      if (!error) {
+        const savedAt = acknowledgement && typeof acknowledgement === 'object' && 'updated_at' in acknowledgement ? acknowledgement.updated_at : null
+        if (typeof savedAt !== 'string') throw new Error('Cloud save acknowledgement missing revision')
+        storedSnapshots.set(userId, data)
+        storedRevisions.set(userId, savedAt)
+        return
+      }
+      if (error.code !== 'PGRST202') throw error
+    }
     const patch = buildWorkbenchPatch(previous, data)
     if (!patch.changed) return
     const request = supabase.rpc('save_workbench_patch', { p_updates: patch.updates, p_remove: patch.removed })
-    const { error } = await (signal ? request.abortSignal(signal) : request)
-    if (!error) { storedSnapshots.set(userId, data); return }
+    const { data: acknowledgement, error } = await (signal ? request.abortSignal(signal) : request)
+    if (!error) {
+      storedSnapshots.set(userId, data)
+      if (acknowledgement && typeof acknowledgement.updated_at === 'string') storedRevisions.set(userId, acknowledgement.updated_at)
+      else storedRevisions.delete(userId)
+      return
+    }
     // During staged rollout, only a missing RPC may use the legacy save path.
     // A real database error must remain visible and keep the previous baseline.
     if (error.code !== 'PGRST202') throw error
   }
-  const request = supabase.from('workbench_documents').upsert({ user_id: userId, data, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+  const savedAt = new Date().toISOString()
+  const request = supabase.from('workbench_documents').upsert({ user_id: userId, data, updated_at: savedAt }, { onConflict: 'user_id' })
   const { error } = await (signal ? request.abortSignal(signal) : request)
   if (error) throw error
   storedSnapshots.set(userId, data)
+  storedRevisions.set(userId, savedAt)
 }
