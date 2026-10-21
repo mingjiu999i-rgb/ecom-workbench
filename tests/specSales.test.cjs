@@ -8,7 +8,7 @@ const { summarizeSpecSales } = require('../src/utils/specSales.ts')
 const { createSettlementWorkbook } = require('../src/utils/settlementWorkbook.ts')
 const { appendSpecSales } = require('../src/utils/specSalesWorkbook.ts')
 const XLSX = require('xlsx-js-style')
-const base = () => ({ clients: [{ id: 'c', name: '甲方' }], stores: [{ id: 'a', name: 'A店', clientId: 'c' }, { id: 'b', name: 'B店', clientId: 'c' }, { id: 'x', name: '其他店', clientId: 'other' }, { id: 'paused', name: '暂停店', clientId: 'c', storeStatus: '暂停' }], products: [], collectionRecords: [], profitRecords: [], orderAccountingLedgers: [] })
+const base = () => ({ clients: [{ id: 'c', name: '甲方' }], stores: [{ id: 'a', name: 'A店', clientId: 'c' }, { id: 'b', name: 'B店', clientId: 'c' }, { id: 'x', name: '其他店', clientId: 'other' }, { id: 'paused', name: '暂停店', clientId: 'c', storeStatus: '暂停' }], products: [{ id: 'p', clientId: 'c', name: '水果' }], productCosts: [{ id: 'cost', productId: 'p', skuCode: '000123', specification: '大果5斤', totalCost: 4 }], skus: [], collectionRecords: [], profitRecords: [], orderAccountingLedgers: [] })
 const row = (extra = {}) => ({ '订单号': '261019-1234567890123', '商品id': 'goods', '商品': '水果', '订单成交时间': '2026-10-19 12:00:00', '订单状态': '已发货', '商品数量(件)': '2', '商家实收金额(元)': '10', '商家编码-规格维度': '000123', '商品规格': '大果 5斤', ...extra })
 const imported = (rows = [row()], store = 'a', data = base()) => mergeLinkSalesOrders(data, parseLinkSalesRows(store, rows))
 const report = data => summarizeSpecSales(data, { clientId: 'c' })
@@ -29,16 +29,17 @@ test('sums units rather than order counts and reimport is idempotent', () => {
   assert.deepEqual(report(again), report(data))
   assert.equal(report(imported([row({ '订单号': 'third' })], 'a', again)).rows[0].quantity, 7)
 })
-test('same full order ID and SKU in different stores remain separate; no listing ID required', () => {
+test('same full order ID in different stores counts both; the same code exports as one row', () => {
   const data = imported([row({ '商品id': '' })], 'b', imported())
-  assert.deepEqual(report(data).rows.map(r => [r.storeId, r.quantity]), [['a', 2], ['b', 2]])
+  assert.deepEqual(report(data).rows.map(r => [r.skuCode, r.quantity]), [['000123', 4]])
 })
-test('different codes never collapse and a shared code with differing labels is explicitly split', () => {
+test('different codes never collapse; different raw SKU names sharing one code are combined', () => {
   const data = imported([row(), row({ '订单号': 'other', '商品规格': '小果 5斤' }), row({ '订单号': 'third', '商家编码-规格维度': '000124' })])
   const result = report(data)
-  assert.equal(result.rows.length, 3)
-  assert.equal(result.rows.filter(r => r.conflictingSpecification).length, 2)
-  assert(result.warnings.some(text => text.includes('同一编码')))
+  assert.equal(result.rows.length, 2)
+  assert.equal(result.rows.find(r => r.skuCode === '000123').quantity, 4)
+  assert.equal(result.rows.find(r => r.skuCode === '000123').specification, '大果5斤')
+  assert.equal(result.warnings.length, 0)
 })
 
 test('screenshot duplicate specs merge for export: JDG2Z 22+1=23 and JDG3D 45+1=46', () => {
@@ -54,12 +55,12 @@ test('screenshot duplicate specs merge for export: JDG2Z 22+1=23 and JDG3D 45+1=
   assert.equal(result.warnings.length, 0)
   const workbook = createSettlementWorkbook(data, { clientId: 'c' })
   const grid = XLSX.utils.sheet_to_json(workbook.Sheets['总览'], { header: 1, raw: true })
-  const rows = grid.filter(r => ['JDG2Z', 'JDG3D'].includes(r[1]))
-  assert.deepEqual(rows.map(r => [r[1], r[9]]), [['JDG2Z', 23], ['JDG3D', 46]])
+  const rows = grid.filter(r => ['JDG2Z', 'JDG3D'].includes(r[0]))
+  assert.deepEqual(rows.map(r => [r[0], r[8]]), [['JDG2Z', 23], ['JDG3D', 46]])
   assert.equal(JSON.stringify(data), before)
 })
 
-test('cosmetic merging still isolates stores, SKU identifiers and substantive specification differences', () => {
+test('exact code is the grouping key regardless of stores or raw name; leading zeros remain significant', () => {
   let data = imported([
     row(), row({ '订单号': 'different-code', '商家编码-规格维度': '123' }),
     row({ '订单号': 'different-weight', '商品规格': '大果 6斤' }),
@@ -69,8 +70,8 @@ test('cosmetic merging still isolates stores, SKU identifiers and substantive sp
     row({ '订单号': 'no-operator', '商品规格': '大果 11斤' }),
   ])
   data = imported([row()], 'b', data)
-  assert.equal(report(data).rows.length, 8)
-  assert(report(data).rows.every(r => r.quantity === 2))
+  assert.equal(report(data).rows.length, 2)
+  assert.deepEqual(report(data).rows.map(r => [r.skuCode, r.quantity]), [['000123', 14], ['123', 2]])
 })
 
 test('merged export keeps unknown quantities unknown and uses selected date range only', () => {
@@ -107,7 +108,7 @@ test('after-sale-only refresh removes unshipped refunded units without using ref
 test('unshipped-refund matching is store scoped and uses full order ID', () => {
   const data = imported([row()], 'b', imported())
   data.orderAccountingLedgers = [ledger({ refunds: [{ orderId: row()['订单号'], success: true, stage: '未发货' }] })]
-  assert.deepEqual(report(data).rows.map(r => r.storeId), ['b'])
+  assert.deepEqual(report(data).rows.map(r => [r.skuCode, r.quantity]), [['000123', 2]])
 })
 test('filters by export client and inclusive payment dates, excludes paused stores', () => {
   let data = imported([row(), row({ '订单号': 'old', '订单成交时间': '2026-10-18' }), row({ '订单号': 'next', '订单成交时间': '2026-10-20' })])
@@ -171,8 +172,71 @@ test('export first sheet contains the spec table, with no extra sheets or financ
   const workbook = createSettlementWorkbook(data, { clientId: 'c' })
   assert.deepEqual(workbook.SheetNames, ['总览', '产品预览', 'A店回款', 'B店回款'])
   const values = Object.values(workbook.Sheets['总览']).map(cell => cell?.v)
-  for (const label of ['各店铺规格销量', '规格维度编码', '售卖规格', '总数量（件）', '000123', '大果 5斤']) assert(values.includes(label), label)
+  for (const label of ['规格销量汇总', '规格编码', '售卖规格', '总数量（件）', '000123', '大果5斤']) assert(values.includes(label), label)
+  assert(!values.includes('大果 5斤'))
   assert.equal(JSON.stringify(data), before)
   const reopened = XLSX.read(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' })
   assert(Object.values(reopened.Sheets['总览']).some(cell => cell?.v === '000123' && cell.t === 's'))
+})
+
+test('code-only source counts without the original SKU name and displays the system short specification', () => {
+  const raw = row(); delete raw['商品规格']
+  const data = imported([raw])
+  assert.deepEqual(report(data).rows.map(r => [r.skuCode, r.specification, r.quantity]), [['000123', '大果5斤', 2]])
+  assert.equal(report(data).complete, true)
+})
+
+test('short specification lookup stays within exported client and never substitutes original selling SKU name', () => {
+  const data = imported([row({ '商品规格': '原订单名称绝不能导出' })])
+  data.products.push({ id: 'foreign-product', clientId: 'other' })
+  data.productCosts.push({ id: 'foreign', productId: 'foreign-product', skuCode: '000123', specification: '其他甲方简称', totalCost: 1 })
+  data.skus.push({ name: '商家原售卖SKU名称', skuId: '000123', specification: '商家原规格' })
+  assert.equal(report(data).rows[0].specification, '大果5斤')
+  data.productCosts = data.productCosts.filter(cost => cost.id !== 'cost')
+  assert.equal(report(data).rows[0].specification, '未设置简称')
+  assert.equal(report(data).rows[0].quantity, 2)
+})
+
+test('ambiguous or blank system short names stay explicit while one code still has one quantity', () => {
+  const data = imported([row(), row({ '订单号': 'other', '商品规格': '另一个长名' })])
+  data.productCosts.push({ id: 'other-name', productId: 'p', skuCode: '000123', specification: '不同简称', totalCost: 999 })
+  assert.deepEqual(report(data).rows.map(r => [r.specification, r.quantity]), [['简称待核对', 4]])
+  data.productCosts = [{ id: 'blank', productId: 'p', skuCode: '000123', specification: '', totalCost: 0 }]
+  assert.equal(report(data).rows[0].specification, '未设置简称')
+  assert.equal(report(data).complete, true)
+})
+
+test('duplicate library entries with the same short name never multiply quantities; library costs have no effect', () => {
+  const data = imported()
+  const before = report(data)
+  data.productCosts.push({ ...data.productCosts[0], id: 'duplicate', totalCost: 99999 })
+  assert.deepEqual(report(data), before)
+  data.productCosts[0].specification = data.productCosts[1].specification = '更新后的系统简称'
+  assert.equal(report(data).rows[0].specification, '更新后的系统简称')
+  assert.equal(report(data).rows[0].quantity, 2)
+})
+
+test('one unknown quantity in any store keeps the cross-store code total unknown, never a partial sum', () => {
+  const data = imported([row({ '商品数量(件)': '' })], 'b', imported())
+  assert.equal(report(data).rows.length, 1)
+  assert.equal(report(data).rows[0].quantity, null)
+  assert.equal(report(data).complete, false)
+})
+
+test('export omits store columns, raw names and detailed diagnostics; many issues produce only one compact note', () => {
+  const data = imported([row({ '商品规格': '原始长规格名称' }), ...Array.from({ length: 40 }, (_, index) => row({ '订单号': `missing-${index}`, '商家编码-规格维度': '' }))])
+  data.orderAccountingLedgers = [ledger({ orders: [{ id: 'unindexed', date: '2026-10-19', cancelled: false, quantity: 7 }] })]
+  const sheet = createSettlementWorkbook(data, { clientId: 'c' }).Sheets['总览']
+  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true })
+  const start = grid.findIndex(r => r[0] === '规格销量汇总')
+  const section = grid.slice(start)
+  const values = section.flat()
+  assert.deepEqual(section[3].filter(Boolean), ['规格编码', '售卖规格', '总数量（件）'])
+  for (const forbidden of ['店铺', 'A店', 'B店', '原始长规格名称']) assert(!values.includes(forbidden))
+  assert(!values.some(value => typeof value === 'string' && /缺少规格维度编码，需补导|历史订单缺少规格明细|A店：/.test(value)))
+  assert.equal(section.filter(r => r.some(value => typeof value === 'string' && value.includes('当前销量不完整'))).length, 1)
+  assert.equal(section.length, 5)
+  const reopened = XLSX.read(XLSX.write({ SheetNames: ['总览'], Sheets: { 总览: sheet } }, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true })
+  const codeCell = Object.values(reopened.Sheets['总览']).find(cell => cell?.v === '000123')
+  assert.equal(codeCell.t, 's'); assert.equal(codeCell.w, '000123'); assert.equal(codeCell.z, '@')
 })
