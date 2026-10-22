@@ -209,3 +209,70 @@ test('an external abort is retryable but is not reported as a known timeout', ()
   assert.match(failure.message, /中断/)
   assert.doesNotMatch(failure.message, /超时/)
 })
+
+test('PostgREST connection errors are transient while missing functions and version conflicts remain distinct', () => {
+  for (const code of ['PGRST000', 'PGRST001', 'PGRST002', 'PGRST003']) {
+    const failure = describeSyncError({ code, message: 'Could not query the database for the schema cache. Retrying.' })
+    assert.equal(failure.retryable, true)
+    assert.equal(failure.reconnecting, true)
+    assert.match(failure.detail, new RegExp(code))
+    assert.match(failure.message, /数据库连接/)
+  }
+  for (const code of ['PGRST202', '40001', '42501', 'PGRST301']) {
+    const failure = describeSyncError({ code, message: 'Cloud request rejected' })
+    assert.equal(failure.retryable, false)
+    assert.notEqual(failure.reconnecting, true)
+  }
+  for (const error of [new TypeError('Failed to fetch'), { status: 503, message: 'Service unavailable' }, { message: 'upstream connect error, delayed connect error: 111' }]) {
+    const failure = describeSyncError(error)
+    assert.equal(failure.retryable, true)
+    assert.equal(failure.reconnecting, true)
+  }
+  assert.notEqual(describeSyncError({ code: '57014', message: 'statement timeout' }).reconnecting, true)
+})
+
+test('schema-cache recovery after ten seconds automatically saves the same draft only after acknowledgement', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let calls = 0
+  const value = { todos: [{ id: 'todo', title: 'unsaved edit' }], orderAccountingLedgers: [{ orders: [{ unitCost: 23 }], refunds: [{ amount: 30 }] }] }
+  const before = JSON.stringify(value)
+  const { manager, writes, removed } = setup(async received => {
+    calls++
+    assert.equal(received, value)
+    assert.equal(JSON.stringify(received), before)
+    if (calls === 3) throw new TypeError('Failed to fetch')
+    if (calls < 4) throw { code: 'PGRST002', message: 'Could not query the database for the schema cache. Retrying.' }
+  }, { retryDelays: undefined })
+  context.after(() => manager.dispose())
+  manager.enqueue(value)
+  context.mock.timers.tick(0); await flushPromises()
+  for (const delay of [1000, 3000]) { context.mock.timers.tick(delay); await flushPromises() }
+  assert.equal(calls, 3)
+  assert.equal(manager.getState().status, 'saving')
+  assert.equal(manager.hasPending(), true)
+  assert.equal(removed.length, 0)
+  context.mock.timers.tick(9999); await flushPromises()
+  assert.equal(calls, 3)
+  context.mock.timers.tick(1); await flushPromises()
+  assert.equal(calls, 4)
+  assert.equal(manager.getState().status, 'saved')
+  assert.equal(manager.hasPending(), false)
+  assert.equal(writes.length, 1)
+  assert.equal(removed.length, 1)
+})
+
+test('persistent schema connection failure stops after bounded backoff and retains the local backup', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let calls = 0
+  const { manager, removed } = setup(async () => { calls++; throw { code: 'PGRST002', message: 'schema cache unavailable' } }, { retryDelays: undefined })
+  context.after(() => manager.dispose())
+  manager.enqueue({ value: 1 })
+  context.mock.timers.tick(0); await flushPromises()
+  for (const delay of [1000, 3000, 10000, 30000, 60000]) { context.mock.timers.tick(delay); await flushPromises() }
+  assert.equal(calls, 6)
+  assert.equal(manager.getState().status, 'error')
+  assert.equal(manager.hasPending(), true)
+  assert.equal(removed.length, 0)
+  context.mock.timers.tick(120000); await flushPromises()
+  assert.equal(calls, 6)
+})
