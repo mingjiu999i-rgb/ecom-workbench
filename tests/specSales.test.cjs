@@ -1,18 +1,75 @@
 const assert = require('node:assert/strict')
-const { test } = require('node:test')
+const { test, mock } = require('node:test')
 const fs = require('node:fs')
 const ts = require('typescript')
 require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, filename)
 const { parseLinkSalesRows, mergeLinkSalesOrders } = require('../src/utils/linkSales.ts')
 const { summarizeSpecSales } = require('../src/utils/specSales.ts')
 const { createSettlementWorkbook } = require('../src/utils/settlementWorkbook.ts')
-const { appendSpecSales } = require('../src/utils/specSalesWorkbook.ts')
+const { appendSpecSales, specSalesYesterdayFilter } = require('../src/utils/specSalesWorkbook.ts')
 const XLSX = require('xlsx-js-style')
+// Existing export fixtures are paid on October 19; exports run the next day.
+mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-20T04:00:00Z') })
 const base = () => ({ clients: [{ id: 'c', name: '甲方' }], stores: [{ id: 'a', name: 'A店', clientId: 'c' }, { id: 'b', name: 'B店', clientId: 'c' }, { id: 'x', name: '其他店', clientId: 'other' }, { id: 'paused', name: '暂停店', clientId: 'c', storeStatus: '暂停' }], products: [{ id: 'p', clientId: 'c', name: '水果' }], productCosts: [{ id: 'cost', productId: 'p', skuCode: '000123', specification: '大果5斤', totalCost: 4 }], skus: [], collectionRecords: [], profitRecords: [], orderAccountingLedgers: [] })
 const row = (extra = {}) => ({ '订单号': '261019-1234567890123', '商品id': 'goods', '商品': '水果', '订单成交时间': '2026-10-19 12:00:00', '订单状态': '已发货', '商品数量(件)': '2', '商家实收金额(元)': '10', '商家编码-规格维度': '000123', '商品规格': '大果 5斤', ...extra })
 const imported = (rows = [row()], store = 'a', data = base()) => mergeLinkSalesOrders(data, parseLinkSalesRows(store, rows))
 const report = data => summarizeSpecSales(data, { clientId: 'c' })
 const ledger = (extra = {}) => ({ storeId: 'a', orders: [], refunds: [], funds: [], promotions: [], ...extra })
+
+test('yesterday uses the Shanghai calendar and ignores the settlement date range without changing it', () => {
+  const filter = Object.freeze({ clientId: 'c', startDate: '2026-09-15', endDate: '2026-10-21' })
+  const cases = [
+    ['2026-10-21T15:59:59Z', '2026-10-20'],
+    ['2026-10-21T16:00:00Z', '2026-10-21'],
+    ['2026-10-22T04:00:00Z', '2026-10-21'],
+    ['2026-01-01T00:00:00Z', '2025-12-31'],
+    ['2024-03-01T00:00:00Z', '2024-02-29'],
+  ]
+  for (const [now, yesterday] of cases) {
+    assert.deepEqual(specSalesYesterdayFilter(filter, new Date(now)), { clientId: 'c', startDate: yesterday, endDate: yesterday })
+  }
+  assert.deepEqual(filter, { clientId: 'c', startDate: '2026-09-15', endDate: '2026-10-21' })
+})
+
+test('only the appended spec section uses yesterday; old and current orders never inflate its quantities', () => {
+  const data = imported([
+    row({ '订单号': 'old', '订单成交时间': '2026-09-15', '商品数量(件)': '100' }),
+    row({ '订单号': 'yesterday-start', '订单成交时间': '2026-10-19 00:00:00', '商品数量(件)': '2' }),
+    row({ '订单号': 'yesterday-end', '订单成交时间': '2026-10-19 23:59:59', '商品数量(件)': '3' }),
+    row({ '订单号': 'today', '订单成交时间': '2026-10-20 00:00:00', '商品数量(件)': '200' }),
+  ])
+  const before = JSON.stringify(data)
+  // Even a financial report covering only an older day keeps yesterday's table.
+  for (const range of [{ startDate: '2026-09-15', endDate: '2026-10-20' }, { startDate: '2026-09-15', endDate: '2026-09-15' }, {}]) {
+    const workbook = createSettlementWorkbook(data, { clientId: 'c', ...range })
+    const grid = XLSX.utils.sheet_to_json(workbook.Sheets['总览'], { header: 1, raw: true })
+    const section = grid.slice(grid.findIndex(r => r[0] === '规格销量汇总'))
+    assert.equal(section[1][0], '昨日 2026-10-19，相同规格编码跨店合计。')
+    assert.deepEqual(section.filter(r => r[0] === '000123').map(r => r[8]), [5])
+  }
+  assert.equal(JSON.stringify(data), before)
+})
+
+test('yesterday with no orders is explicit and does not fall back to historical sales', () => {
+  const data = imported([row({ '订单成交时间': '2026-10-18', '商品数量(件)': '999' })])
+  const sheet = XLSX.utils.aoa_to_sheet([['existing financial cell']])
+  appendSpecSales(sheet, data, { clientId: 'c', startDate: '2026-09-15', endDate: '2026-10-20' })
+  const values = Object.values(sheet).map(cell => cell?.v)
+  assert(values.includes('昨日 2026-10-19，相同规格编码跨店合计。'))
+  assert(values.includes('所选范围暂无可统计的规格销量。'))
+  assert(!values.includes(999))
+  assert(!values.includes('000123'))
+})
+
+test('missing dates and quantities in the yesterday section stay unknown instead of zero', () => {
+  for (const unknown of [row({ '订单号': 'unknown', '订单成交时间': '' }), row({ '订单号': 'unknown', '商品数量(件)': '' })]) {
+    const sheet = XLSX.utils.aoa_to_sheet([['existing financial cell']])
+    appendSpecSales(sheet, imported([row(), unknown]), { clientId: 'c', startDate: '2026-09-15', endDate: '2026-10-20' })
+    const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true })
+    assert.equal(grid.find(r => r[0] === '000123')[8], '待补数据')
+    assert(grid.some(r => typeof r[0] === 'string' && r[0].includes('当前销量不完整')))
+  }
+})
 
 test('captures original specification code and selling specification without cost matching', () => {
   const data = imported()

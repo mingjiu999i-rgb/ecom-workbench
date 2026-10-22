@@ -2,10 +2,19 @@ import * as XLSX from 'xlsx-js-style'
 import type { WorkbenchData } from '../types/models'
 import { summarizeSpecSales, type SpecSalesFilter } from './specSales'
 
+export function specSalesYesterdayFilter(filter: SpecSalesFilter, now = new Date()): SpecSalesFilter {
+  const yesterday = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(now.getTime() - 24 * 60 * 60 * 1000))
+  return { clientId: filter.clientId, startDate: yesterday, endDate: yesterday }
+}
+
 // Append only below the original financial canvas. All existing cells, styles,
 // merges, widths, panes and financial worksheets remain untouched.
 export function appendSpecSales(sheet: XLSX.WorkSheet, data: WorkbenchData, filter: SpecSalesFilter) {
-  const report = summarizeSpecSales(data, filter)
+  // This section always shows yesterday, independently of the financial range.
+  const reportFilter = specSalesYesterdayFilter(filter)
+  const report = summarizeSpecSales(data, reportFilter)
   const oldRange = XLSX.utils.decode_range(sheet['!ref'] || 'A1:L1')
   let row = oldRange.e.r + 2
   const border = { bottom: { style: 'thin' as const, color: { rgb: 'DCE2EA' } } }
@@ -21,7 +30,7 @@ export function appendSpecSales(sheet: XLSX.WorkSheet, data: WorkbenchData, filt
   }
   put(0, '规格销量汇总', { ...base, font: { ...base.font, bold: true, sz: 14 } })
   merges.push({ s: { r: row, c: 0 }, e: { r: row, c: 11 } }); heights[row++] = { hpt: 28 }
-  full(`${filter.startDate || '全部起始日期'} 至 ${filter.endDate || '全部结束日期'}，相同规格编码跨店合计。`)
+  full(`昨日 ${reportFilter.startDate}，相同规格编码跨店合计。`)
   if (!report.complete) full('部分历史订单缺少可核对的编码、日期、件数或状态，当前销量不完整；待补数据不按 0 处理。', true)
   const spans = [[0, 2], [3, 7], [8, 11]]
   const cells = (values: Array<string | number>, header = false) => {

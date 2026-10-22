@@ -143,7 +143,9 @@ test('settlement workbook uses the same order-date refund in filtered summary an
   assert.equal(workbook.Sheets['总览'].G7.v, 30)
 })
 
-test('all clients export separate overview, product preview and store details with cross-store monthly totals', () => {
+test('all clients export separate overview, product preview and store details with cross-store monthly totals', t => {
+  // Keep the appended yesterday section aligned with this October 1 fixture.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-02T04:00:00Z') })
   const first = initial()
   const baseProfit = profitRecords(first)[0]
   const data = {
