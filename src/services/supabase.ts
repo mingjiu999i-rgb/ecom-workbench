@@ -57,18 +57,23 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   return { ...value, stores, products, productCosts, productLinks, skus, skuHistory: value.skuHistory || [], todos: value.todos || [], profitRecords: value.profitRecords || [], collectionRecords }
 }
 
-export async function loadWorkbenchSnapshot(userId: string): Promise<{ data: WorkbenchData; storedData: WorkbenchData }> {
-  const { data, error } = await supabase.from('workbench_documents').select('data, updated_at').eq('user_id', userId).maybeSingle()
-  if (error) throw error
+export async function loadWorkbenchSnapshot(userId: string, options: { signal?: AbortSignal; initialize?: boolean } = {}): Promise<{ data: WorkbenchData; storedData: WorkbenchData }> {
+  const started = performance.now()
+  const request = supabase.from('workbench_documents').select('data, updated_at').eq('user_id', userId)
+  const { data, error, status } = await (options.signal ? request.abortSignal(options.signal) : request).maybeSingle()
+  options.signal?.throwIfAborted()
+  if (error) throw Object.assign(error, { status, stage: 'query', elapsedMs: Math.round(performance.now() - started) })
   if (data?.data) {
     const storedData = data.data as WorkbenchData
     storedSnapshots.set(userId, storedData)
     if (typeof data.updated_at === 'string') storedRevisions.set(userId, data.updated_at)
     else storedRevisions.delete(userId)
-    return { data: normalizeWorkbench(storedData), storedData }
+    try { return { data: normalizeWorkbench(storedData), storedData } }
+    catch { throw { code: 'WORKBENCH_FORMAT', status, stage: 'normalize', elapsedMs: Math.round(performance.now() - started), message: '云端请求成功，但保存数据结构无法按当前版本加载。原始数据未修改。' } }
   }
+  if (options.initialize === false) throw { code: 'WORKBENCH_NOT_FOUND', status, stage: 'query', message: '未读到当前账号的云端文档。未创建或覆盖任何数据。' }
   const initial = cloneInitialData()
-  await saveWorkbench(userId, initial)
+  await saveWorkbench(userId, initial, options.signal)
   return { data: initial, storedData: initial }
 }
 

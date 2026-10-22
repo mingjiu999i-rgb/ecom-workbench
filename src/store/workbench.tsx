@@ -7,6 +7,8 @@ import { isActiveProductLink } from '../utils/selectors'
 import { acknowledgeWorkbenchDraft, readWorkbenchDraft, removeWorkbenchDraft, writeWorkbenchDraft } from '../services/workbenchDrafts'
 import { createWorkbenchSync, describeSyncError, type PendingDraft, type SyncState } from '../utils/workbenchSync'
 import { inspectWorkbenchRecovery, isResolvedDraft, sameStoredDocument, type recoveryDifferences } from '../utils/workbenchRecovery'
+import { readonlyDraftIssue } from '../utils/readonlyWorkbench'
+import { ReadonlyWorkbench } from '../components/ReadonlyWorkbench'
 
 type SyncStatus = 'saved' | 'saving' | 'error'
 interface WorkbenchContextValue {
@@ -34,6 +36,13 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [differences, setDifferences] = useState<ReturnType<typeof recoveryDifferences>>([])
   const [recoveryIssue, setRecoveryIssue] = useState('')
   const [resolving, setResolving] = useState(false)
+  const [readonlyDraft, setReadonlyDraft] = useState<PendingDraft<WorkbenchData> | null>(null)
+  const [loadedOwner, setLoadedOwner] = useState('')
+  const [cloudLoading, setCloudLoading] = useState(false)
+  const [loadDetail, setLoadDetail] = useState('')
+  const readonlyRef = useRef(false)
+  const ownerRef = useRef<string | undefined>(undefined)
+  const loadController = useRef<AbortController | null>(null)
   const dataRef = useRef<WorkbenchData | null>(null)
   const syncRef = useRef<ReturnType<typeof createWorkbenchSync<WorkbenchData>> | null>(null)
   const userId = session?.user.id
@@ -45,42 +54,78 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (!userId) { dataRef.current = null; setData(null); setRecovery(null); return }
+    ownerRef.current = userId
+    readonlyRef.current = false
+    setReadonlyDraft(null)
+    if (!userId) { dataRef.current = null; setData(null); setRecovery(null); setLoadedOwner(''); return }
     let active = true
     dataRef.current = null
     setData(null)
     setRecovery(null)
+    setLoadedOwner(userId)
+    setCloudLoading(true)
+    setLoadDetail('')
     setDifferences([]); setRecoveryIssue(''); setResolving(false)
     setLoadError('')
     setSyncState({ status: 'saved', error: null, backupError: '' })
     const manager = createWorkbenchSync<WorkbenchData>({
       userId, save: (value, signal) => saveWorkbench(userId, value, signal),
       storage: { write: writeWorkbenchDraft, remove: removeWorkbenchDraft, acknowledge: acknowledgeWorkbenchDraft },
-      notify: state => { if (active) setSyncState(state) },
+      notify: state => { if (active && !readonlyRef.current) setSyncState(state) },
     })
     syncRef.current = manager
+    const controller = new AbortController()
+    loadController.current = controller
+    let timeout = setTimeout(() => controller.abort(new DOMException('云端读取超过 30000 ms', 'TimeoutError')), 30000)
+    const draftTask = readWorkbenchDraft(userId)
+    // Offer the local reader without waiting for a hung cloud request.
+    void draftTask.then(local => {
+      if (active && !readonlyRef.current && local && !isResolvedDraft(local)) setRecovery(local)
+    }).catch(() => { if (active) setRecoveryIssue('本机备份读取失败，未清理备份。') })
     const load = async () => {
-      const [cloud, draft] = await Promise.allSettled([loadWorkbenchSnapshot(userId), readWorkbenchDraft(userId)])
-      if (!active) return
+      const [cloud, draft] = await Promise.allSettled([loadWorkbenchSnapshot(userId, { signal: controller.signal, initialize: false }), draftTask])
+      clearTimeout(timeout)
+      if (!active || readonlyRef.current) return
+      setCloudLoading(false)
       const local = draft.status === 'fulfilled' ? draft.value : null
       if (cloud.status === 'fulfilled') {
         dataRef.current = cloud.value.data
         setData(cloud.value.data)
         const inspection = inspectWorkbenchRecovery(local, cloud.value.storedData)
         if (inspection.action === 'recover' && local) { setDifferences(inspection.differences); setRecovery(local) }
-        else if (inspection.action === 'cleanup' && local) void manager.clearResolvedDraft(local.id, local.resolution || 'cloud-saved')
+        else { setRecovery(null); if (inspection.action === 'cleanup' && local) void manager.clearResolvedDraft(local.id, local.resolution || 'cloud-saved') }
       } else {
         if (local && !isResolvedDraft(local)) setRecovery(local)
-        setLoadError(describeSyncError(cloud.reason).message)
+        let failure = cloud.reason
+        // Preserve the existing new-account behavior only when local storage
+        // was read successfully and no local snapshot can be displaced.
+        if (draft.status === 'fulfilled' && !local && cloud.reason?.code === 'WORKBENCH_NOT_FOUND') {
+          timeout = setTimeout(() => controller.abort(new DOMException('云端初始化超过 30000 ms', 'TimeoutError')), 30000)
+          try {
+            const initial = await loadWorkbenchSnapshot(userId, { signal: controller.signal })
+            if (active && !readonlyRef.current) { dataRef.current = initial.data; setData(initial.data) }
+            return
+          } catch (error) { failure = error }
+          finally { clearTimeout(timeout) }
+        }
+        if (!active || readonlyRef.current) return
+        const reason = controller.signal.aborted ? controller.signal.reason : failure
+        const diagnostic = describeSyncError(reason)
+        const details = failure as { status?: number; stage?: string; elapsedMs?: number } | null
+        setLoadError('无法读取云端数据。已有本机备份会保留，可选择只读查看。')
+        setLoadDetail([diagnostic.detail, details?.status ? `HTTP ${details.status}` : '', details?.stage ? `阶段 ${details.stage}` : '', typeof details?.elapsedMs === 'number' ? `${details.elapsedMs} ms` : ''].filter(Boolean).join(' · '))
       }
     }
     void load()
-    const online = () => manager.retry()
+    const online = () => { if (!readonlyRef.current) manager.retry() }
     const beforeUnload = (event: BeforeUnloadEvent) => { if (manager.hasPending()) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('online', online)
     window.addEventListener('beforeunload', beforeUnload)
     return () => {
       active = false
+      clearTimeout(timeout)
+      controller.abort()
+      if (loadController.current === controller) loadController.current = null
       manager.dispose()
       if (syncRef.current === manager) syncRef.current = null
       window.removeEventListener('online', online)
@@ -90,16 +135,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
 
   const update = useCallback((recipe: (current: WorkbenchData) => WorkbenchData) => {
     const current = dataRef.current
-    if (!current || !syncRef.current) return
+    if (readonlyRef.current || ownerRef.current !== userId || !current || !syncRef.current) return
     const next = recipe(current)
     if (next === current || sameStoredDocument(current, next)) return
     dataRef.current = next
     setData(next)
     syncRef.current.enqueue(next)
-  }, [])
+  }, [userId])
 
   useEffect(() => {
-    if (!data) return
+    if (!data || readonlyDraft || loadedOwner !== userId) return
     const context = document.modelContext
     if (!context?.registerTool) return
     const lifecycle = new AbortController()
@@ -116,16 +161,29 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       },
     }, { signal: lifecycle.signal })).catch(report)
     return () => lifecycle.abort()
-  }, [data])
+  }, [data, readonlyDraft, loadedOwner, userId])
 
   if (!isSupabaseConfigured) return <SetupRequired />
   if (session === undefined) return <FullScreenLoading label="正在连接云端…" />
   if (!session) return <AuthScreen />
-  if (recovery) return <div className="state-page"><Cloud size={30} /><strong>{data ? '本机备份与云端有内容差异' : '暂时无法核对本机备份'}</strong><span>{new Date(recovery.updatedAt).toLocaleString('zh-CN')} 的本机备份已保留。{data ? '仅检测到下列内容差异；尚未合并、删除或覆盖任何版本。' : '云端读取失败，无法比较差异。请先导出备份，再决定是否恢复。'}</span>
+  if (loadedOwner !== userId) return <FullScreenLoading label="正在读取当前账号…" />
+  if (readonlyDraft?.userId === userId) return <ReadonlyWorkbench draft={readonlyDraft} email={session.user.email || '已登录'} onExport={() => downloadWorkbenchBackup(readonlyDraft.data)} onExit={() => window.location.reload()} />
+  if (recovery) return <div className="state-page"><Cloud size={30} /><strong>{data ? '本机备份与云端有内容差异' : cloudLoading ? '正在核对本机备份' : '暂时无法核对本机备份'}</strong><span>{new Date(recovery.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 的本机备份已保留。{data ? '仅检测到下列内容差异；尚未合并、删除或覆盖任何版本。' : cloudLoading ? '云端仍在读取，可以先只读查看本机数据。' : '云端读取失败，无法比较差异。可以只读查看本机数据，备份不会被修改。'}</span>
     {differences.length > 0 && <ul className="recovery-differences" aria-label="本机与云端差异">{differences.map(item => <li key={item.key}><strong>{item.label}</strong><span>{item.localCount != null || item.cloudCount != null ? `本机 ${item.localCount ?? '未记录'} 条 / 云端 ${item.cloudCount ?? '未记录'} 条，内容不同` : '保存内容或字段不同'}</span></li>)}</ul>}
     {recoveryIssue && <p className="recovery-error" role="alert">{recoveryIssue}</p>}
-    <div className="draft-recovery-actions"><button className="button primary" disabled={resolving} onClick={() => { if (!window.confirm('恢复会用这份本机备份替换云端工作台内容。请确认已核对差异，建议先导出备份。确定恢复吗？')) return; const value = recovery.data; dataRef.current = value; setData(value); setLoadError(''); setRecovery(null); syncRef.current?.enqueue(value) }}>恢复本机修改并同步</button><button className="button secondary" onClick={() => downloadWorkbenchBackup(recovery.data)}>导出本机备份</button>{data && <button className="button secondary" disabled={resolving} onClick={async () => { setResolving(true); setRecoveryIssue(''); const resolved = await syncRef.current?.clearResolvedDraft(recovery.id, 'kept-cloud'); if (resolved) setRecovery(null); else setRecoveryIssue('无法记录选择或清理本机备份，备份仍保留。请导出后重试，不会悄悄丢弃修改。'); setResolving(false) }}>{resolving ? '正在记录选择…' : '保留云端并清理本机备份'}</button>}</div></div>
-  if (loadError) return <StateScreen title="无法读取云端数据" message={loadError} action="重新加载" onAction={() => window.location.reload()} />
+    {loadDetail && <details><summary>查看读取错误详情</summary><pre>{loadDetail}</pre></details>}
+    <div className="draft-recovery-actions"><button className="button primary" onClick={() => {
+      const issue = readonlyDraftIssue(recovery, userId)
+      if (issue) { setRecoveryIssue(issue); return }
+      // Set the write barrier synchronously before aborting any pending read.
+      readonlyRef.current = true
+      loadController.current?.abort()
+      syncRef.current?.dispose()
+      syncRef.current = null
+      dataRef.current = null
+      setReadonlyDraft(recovery)
+    }}>只读查看本机数据</button><button className="button secondary" onClick={() => downloadWorkbenchBackup(recovery.data)}>导出本机备份</button><button className="button secondary" disabled={resolving || cloudLoading || !data} onClick={() => { if (!window.confirm('恢复会用这份本机备份替换云端工作台内容。请确认已核对差异，建议先导出备份。确定恢复吗？')) return; const value = recovery.data; dataRef.current = value; setData(value); setLoadError(''); setRecovery(null); syncRef.current?.enqueue(value) }}>恢复本机修改并同步</button>{data && <button className="button secondary" disabled={resolving} onClick={async () => { setResolving(true); setRecoveryIssue(''); const resolved = await syncRef.current?.clearResolvedDraft(recovery.id, 'kept-cloud'); if (resolved) setRecovery(null); else setRecoveryIssue('无法记录选择或清理本机备份，备份仍保留。请导出后重试，不会悄悄丢弃修改。'); setResolving(false) }}>{resolving ? '正在记录选择…' : '保留云端并清理本机备份'}</button>}</div></div>
+  if (loadError) return <><StateScreen title="无法读取云端数据" message={loadError} action="重新加载" onAction={() => window.location.reload()} />{loadDetail && <details><summary>查看读取错误详情</summary><pre>{loadDetail}</pre></details>}</>
   if (!data) return <FullScreenLoading label="正在同步工作台数据…" />
 
   const value: WorkbenchContextValue = {
