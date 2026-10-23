@@ -1,0 +1,13 @@
+{
+  "commit": "97ed2fafe9d28148bd77f0af09a972d71fab8e23",
+  "files": {
+    "src/pages/PddAnalyzer.tsx": "50265f9d32e5b0e2187272f6cccf0add0f2c64f1",
+    "src/utils/pddLedger.ts": "5cdd3bf542e134409e730b08419f4d2a3b757fb1",
+    "src/utils/pddCalculations.ts": "7b6b4d59a848e4b3e45fca5b1b8acf3940aaae4d",
+    "src/utils/collectionRefunds.ts": "02acc71c0efec14ba8d87ea21b94b8f9ca70f733",
+    "src/utils/settlementWorkbook.ts": "f353c55565ef2333f50d43ae41bfbef28933f207",
+    "src/utils/profitWorkbook.ts": "4570243e683a93434371152b7809927da9833b85",
+    "src/utils/linkSales.ts": "ea146b780a8cd8c793b21934fb7a0d48659314c4",
+    "src/utils/calculations.ts": "533ea3fa8f05572acfb820d5e180f06420e32d89"
+  }
+}

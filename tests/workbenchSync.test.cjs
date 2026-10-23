@@ -231,7 +231,7 @@ test('PostgREST connection errors are transient while missing functions and vers
   assert.notEqual(describeSyncError({ code: '57014', message: 'statement timeout' }).reconnecting, true)
 })
 
-test('schema-cache recovery after ten seconds automatically saves the same draft only after acknowledgement', async context => {
+test('schema-cache recovery uses exponential delays and saves only after acknowledgement', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] })
   let calls = 0
   const value = { todos: [{ id: 'todo', title: 'unsaved edit' }], orderAccountingLedgers: [{ orders: [{ unitCost: 23 }], refunds: [{ amount: 30 }] }] }
@@ -242,16 +242,16 @@ test('schema-cache recovery after ten seconds automatically saves the same draft
     assert.equal(JSON.stringify(received), before)
     if (calls === 3) throw new TypeError('Failed to fetch')
     if (calls < 4) throw { code: 'PGRST002', message: 'Could not query the database for the schema cache. Retrying.' }
-  }, { retryDelays: undefined })
+  }, { retryDelays: undefined, random: () => 1 })
   context.after(() => manager.dispose())
   manager.enqueue(value)
   context.mock.timers.tick(0); await flushPromises()
-  for (const delay of [1000, 3000]) { context.mock.timers.tick(delay); await flushPromises() }
+  for (const delay of [1000, 2000]) { context.mock.timers.tick(delay); await flushPromises() }
   assert.equal(calls, 3)
   assert.equal(manager.getState().status, 'saving')
   assert.equal(manager.hasPending(), true)
   assert.equal(removed.length, 0)
-  context.mock.timers.tick(9999); await flushPromises()
+  context.mock.timers.tick(3999); await flushPromises()
   assert.equal(calls, 3)
   context.mock.timers.tick(1); await flushPromises()
   assert.equal(calls, 4)
@@ -261,14 +261,40 @@ test('schema-cache recovery after ten seconds automatically saves the same draft
   assert.equal(removed.length, 1)
 })
 
+test('new edits during an outage share the account retry budget and cannot restart exhausted retries', async context => {
+  // Date and timer ticks must share one clock when testing the cooldown deadline.
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let calls=0
+  const {manager,writes}=setup(async()=>{calls++;throw new TypeError('Failed to fetch')},{retryDelays:[100,200]})
+  context.after(()=>manager.dispose())
+  manager.enqueue({a:1});context.mock.timers.tick(0);await flushPromises()
+  manager.enqueue({a:1,b:2});context.mock.timers.tick(99);await flushPromises();assert.equal(calls,1)
+  context.mock.timers.tick(1);await flushPromises();assert.equal(calls,2)
+  manager.enqueue({a:1,b:2,c:3});context.mock.timers.tick(200);await flushPromises()
+  assert.equal(calls,3);assert.equal(manager.getState().status,'error')
+  manager.enqueue({a:1,b:2,c:3,d:4});context.mock.timers.tick(10000);await flushPromises()
+  assert.equal(calls,3);assert.equal(manager.hasPending(),true)
+  assert.deepEqual(writes.at(-1).data,{a:1,b:2,c:3,d:4})
+})
+
+test('retry jitter stays within half to full exponential delay', async context => {
+  context.mock.timers.enable({apis:['setTimeout']})
+  let calls=0
+  const {manager}=setup(async()=>{if(++calls<2)throw {code:'503',message:'Service unavailable'}},{retryDelays:undefined,random:()=>0})
+  context.after(()=>manager.dispose());manager.enqueue({value:1})
+  context.mock.timers.tick(0);await flushPromises();context.mock.timers.tick(499);await flushPromises();assert.equal(calls,1)
+  context.mock.timers.tick(1);await flushPromises();assert.equal(calls,2)
+  assert.equal(manager.getState().status,'saved')
+})
+
 test('persistent schema connection failure stops after bounded backoff and retains the local backup', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] })
   let calls = 0
-  const { manager, removed } = setup(async () => { calls++; throw { code: 'PGRST002', message: 'schema cache unavailable' } }, { retryDelays: undefined })
+  const { manager, removed } = setup(async () => { calls++; throw { code: 'PGRST002', message: 'schema cache unavailable' } }, { retryDelays: undefined, random: () => 1 })
   context.after(() => manager.dispose())
   manager.enqueue({ value: 1 })
   context.mock.timers.tick(0); await flushPromises()
-  for (const delay of [1000, 3000, 10000, 30000, 60000]) { context.mock.timers.tick(delay); await flushPromises() }
+  for (const delay of [1000, 2000, 4000, 8000, 16000]) { context.mock.timers.tick(delay); await flushPromises() }
   assert.equal(calls, 6)
   assert.equal(manager.getState().status, 'error')
   assert.equal(manager.hasPending(), true)
