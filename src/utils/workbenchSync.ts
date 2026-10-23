@@ -28,14 +28,15 @@ export function describeSyncError(error: unknown): SyncFailure {
 export function createWorkbenchSync<T>(options: {
   userId: string; save: (data: T, signal: AbortSignal) => Promise<void>
   storage: DraftStorage<T>; notify: (state: SyncState) => void
-  debounceMs?: number; retryDelays?: number[]; timeoutMs?: number
+  debounceMs?: number; retryDelays?: number[]; timeoutMs?: number; random?: () => number
 }) {
-  type Pending = PendingDraft<T> & { backup: Promise<void>; attempts: number }
+  type Pending = PendingDraft<T> & { backup: Promise<void> }
   let pending: Pending | null = null, running = false, disposed = false, timer: ReturnType<typeof setTimeout> | undefined
   let active: AbortController | null = null, backupQueue = Promise.resolve(), backupError = ''
   let state: SyncState = { status: 'saved', error: null, backupError: '' }
   const cleanupPending = new Map<string, DraftResolution>()
   let cleanupQueue = Promise.resolve(), cleanupError = ''
+  let failureAttempts = 0, retryAt = 0, exhausted = false
   const notify = (status: SyncState['status'], error: SyncFailure | null = null) => {
     state = { status, error, backupError, cleanupError }
     if (!disposed) options.notify(state)
@@ -43,7 +44,7 @@ export function createWorkbenchSync<T>(options: {
   const schedule = (delay: number) => {
     if (disposed) return
     clearTimeout(timer)
-    timer = setTimeout(() => { void run() }, delay)
+    timer = setTimeout(() => { void run() }, Math.max(delay, retryAt - Date.now()))
   }
   function clearResolvedDraft(id: string, resolution: DraftResolution = 'cloud-saved'): Promise<boolean> {
     cleanupPending.set(id, resolution)
@@ -76,6 +77,7 @@ export function createWorkbenchSync<T>(options: {
       const timeoutMs = options.timeoutMs ?? 120000
       timeout = setTimeout(() => controller.abort(new DOMException(`云端保存请求超过 ${timeoutMs} ms`, 'TimeoutError')), timeoutMs)
       await options.save(current.data, controller.signal)
+      failureAttempts = 0; retryAt = 0; exhausted = false
       clearTimeout(timeout)
       if (disposed) return
       if (pending?.id === current.id) pending = null
@@ -83,18 +85,21 @@ export function createWorkbenchSync<T>(options: {
       notify(pending ? 'saving' : 'saved')
     } catch (error) {
       if (disposed) return
-      if (pending?.id !== current.id) notify('saving')
+      const failure = describeSyncError(controller.signal.aborted ? controller.signal.reason : error)
+      if (pending?.id !== current.id && !failure.retryable) notify('saving')
       else {
         // PostgREST may wrap the fetch rejection; retain our actual timeout
         // reason so diagnostics do not degrade to an unexplained AbortError.
-        const failure = describeSyncError(controller.signal.aborted ? controller.signal.reason : error)
         // A database restart can take longer than the ordinary short retry
         // window. Keep the draft pending through schema-cache reconstruction.
-        const delays = options.retryDelays ?? (failure.reconnecting ? [1000, 3000, 10000, 30000, 60000] : [1000, 3000])
-        if (failure.retryable && current.attempts < delays.length) {
-          retryDelay = delays[current.attempts++]
+        const delays = options.retryDelays ?? (failure.reconnecting ? [1000, 2000, 4000, 8000, 16000] : [1000, 2000])
+        if (failure.retryable && failureAttempts < delays.length) {
+          const base = delays[failureAttempts++]
+          // Equal jitter avoids synchronized retries while keeping a finite cap.
+          retryDelay = options.retryDelays ? base : Math.floor(base * (0.5 + 0.5 * (options.random ?? Math.random)()))
+          retryAt = Date.now() + retryDelay
           notify('saving', failure)
-        } else notify('error', failure)
+        } else { exhausted = failure.retryable; notify('error', failure) }
       }
     } finally {
       clearTimeout(timeout)
@@ -109,13 +114,15 @@ export function createWorkbenchSync<T>(options: {
       const draft: PendingDraft<T> = { id: crypto.randomUUID(), userId: options.userId, updatedAt: new Date().toISOString(), data }
       const backup = backupQueue.then(() => options.storage.write(draft)).then(() => { backupError = '' }).catch(() => { backupError = '本机自动备份不可用，请使用“导出未同步备份”保留修改。' })
       backupQueue = backup
-      pending = { ...draft, backup, attempts: 0 }
+      pending = { ...draft, backup }
+      // New edits remain durable but cannot reset a failed account's retry budget.
+      if (exhausted) { notify('error', state.error); return }
       notify('saving')
       schedule(options.debounceMs ?? 300)
     },
     retry() {
       if (disposed) return
-      if (pending) { pending.attempts = 0; notify('saving'); schedule(0) }
+      if (pending) { failureAttempts = 0; retryAt = 0; exhausted = false; notify('saving'); schedule(0) }
       else for (const [id, resolution] of cleanupPending) void clearResolvedDraft(id, resolution)
     },
     clearResolvedDraft,
