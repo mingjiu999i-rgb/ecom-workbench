@@ -92,6 +92,13 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
   const opening = state?.dayOpening?.date === date ? state.dayOpening : undefined
   const current = refundBalances(data).filter(row => storeIds.has(row.storeId))
   const before = (opening?.balances || []).filter(row => storeIds.has(row.storeId))
+  // Display-only aggregation of saved turnover; never persisted in refund snapshots.
+  const salesRecords = data.collectionRecords.filter(row => storeIds.has(row.storeId) && validDay(row.date))
+  const totalSales = (ids: Set<string>) => {
+    const records = salesRecords.filter(row => ids.has(row.storeId))
+    return !records.length || records.some(row => !finite(row.originalSales)) ? null
+      : records.reduce((sum, row) => sum + cents(row.originalSales), 0) / 100
+  }
   const total = (rows: RefundBalance[]) => rows.some(row => row.amount == null) ? null : rows.reduce((sum, row) => sum + cents(row.amount!), 0) / 100
   const difference = (after: number | null, prior: number | null) => after == null || prior == null ? null : (cents(after) - cents(prior)) / 100
   const stores = [...storeIds].map(storeId => {
@@ -100,7 +107,7 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
     const previous = before.filter(row => row.storeId === storeId)
     const after = total(records), prior = opening ? total(previous) : null
     return { storeId, name: store?.name || '历史店铺', clientId: store?.clientId || '',
-      before: prior, after, amount: difference(after, prior),
+      before: prior, after, amount: difference(after, prior), originalSales: totalSales(new Set([storeId])),
       recordedDays: new Set(records.map(row => row.orderDate)).size,
       hasData: records.length > 0 || previous.length > 0,
       unknownBalances: records.filter(row => row.amount == null).length + previous.filter(row => row.amount == null).length }
@@ -113,13 +120,13 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
     const previous = before.filter(row => ids.has(row.storeId))
     const after = total(records), prior = opening ? total(previous) : null
     return { clientId, name: data.clients.find(row => row.id === clientId)?.name || '未关联甲方',
-      before: prior, after, amount: difference(after, prior), stores: children,
+      before: prior, after, amount: difference(after, prior), stores: children, originalSales: totalSales(ids),
       recordedDays: new Set(records.map(row => row.orderDate)).size }
   })
   const hasData = current.length > 0 || before.length > 0
   const after = hasData ? total(current) : null
   const prior = hasData && opening ? total(before) : null
-  return { date, before: prior, after, amount: difference(after, prior), stores, clients, hasData,
+  return { date, before: prior, after, amount: difference(after, prior), stores, clients, hasData, originalSales: totalSales(storeIds),
     recordedDays: new Set(current.map(row => row.orderDate)).size,
     partialDay: opening?.partial ?? true, baselineAt: opening?.observedAt || null,
     unknownBalances: stores.reduce((sum, row) => sum + row.unknownBalances, 0) }

@@ -166,3 +166,50 @@ test('only overview metadata changes: financial objects and values are preserved
   for (const field of Object.keys(incoming).filter(field => field !== 'overviewRefundActivity')) assert.equal(observed[field], incoming[field])
   assert.deepEqual(Object.keys(observed).filter(field => observed[field] !== incoming[field]), ['overviewRefundActivity'])
 })
+
+test('saved turnover includes all dates and unchanged stores in client and selected totals without modifying storage', () => {
+  const records = [
+    { ...row('a', 200), originalSales: 1000.10, effectiveSales: 800.10 },
+    { ...row('a', 50, '2026-10-14'), originalSales: 200.20, effectiveSales: 150.20 },
+    { ...row('b', 300), originalSales: 3000, effectiveSales: 2700 },
+    { ...row('c', 500), originalSales: 5000, effectiveSales: 4500 },
+  ]
+  const value = update(observe(data(records), prior), records.map((record, i) => i === 0 ? { ...record, shippedRefund: 250 } : record))
+  const snapshot = JSON.stringify(value)
+  const summary = totals(value, day, all)
+  assert.equal(summary.stores.find(store => store.storeId === 'a').originalSales, 1200.30)
+  assert.equal(summary.clients.find(client => client.clientId === 'one').originalSales, 4200.30)
+  assert.equal(summary.originalSales, 9200.30)
+  const visible = detailClients(summary)
+  assert.deepEqual(visible[0].stores.map(store => store.storeId), ['a'])
+  assert.equal(visible[0].originalSales, 4200.30)
+  assert.equal(totals(value, day, new Set(['a'])).originalSales, 1200.30)
+  assert.equal(totals(value, day, new Set(['b'])).originalSales, 3000)
+  assert.equal(summary.amount, 50)
+  assert.equal(JSON.stringify(value), snapshot)
+})
+
+test('missing or invalid saved turnover stays unknown while confirmed zero and unrelated stores remain usable', () => {
+  for (const originalSales of [undefined, null, NaN, Infinity]) {
+    const value = data([{ ...row('a', 20), originalSales }, { ...row('b', 30), originalSales: 0 }, { ...row('c', 40), originalSales: 100 }])
+    const summary = totals(value, day, all)
+    assert.equal(summary.originalSales, null)
+    assert.equal(summary.clients.find(client => client.clientId === 'one').originalSales, null)
+    assert.equal(summary.stores.find(store => store.storeId === 'a').originalSales, null)
+    assert.equal(totals(value, day, new Set(['b'])).originalSales, 0)
+    assert.equal(totals(value, day, new Set(['c'])).originalSales, 100)
+  }
+  assert.equal(totals(data([]), day, all).originalSales, null)
+})
+
+test('turnover uses the same valid saved dates as refund totals and retains cent precision', () => {
+  const value = data([
+    { ...row('a', 0), originalSales: 0.1 },
+    { ...row('a', 0, '2026-10-01'), originalSales: 0.2 },
+    { ...row('a', 0, 'invalid'), originalSales: 9000 },
+    { ...row('a', 0, '2026-02-30'), originalSales: 9000 },
+  ])
+  const summary = totals(value, day, new Set(['a']))
+  assert.equal(summary.originalSales, 0.3)
+  assert.equal(summary.recordedDays, 2)
+})

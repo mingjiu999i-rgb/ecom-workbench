@@ -66,9 +66,9 @@ export function OverviewRefundMetric({ storeIds, onViewOrder }: {
         {summary.partialDay && <div className="overview-refund-notice">{summary.baselineAt ? `从 ${time(summary.baselineAt)} 建立的基准开始比较；建立基准以前的新增金额未记录，不能倒推。` : '尚未建立导入前基准，暂时无法计算增加金额。'}</div>}
         {summary.unknownBalances > 0 && <div className="overview-refund-notice">部分历史退款金额缺失，导入前后差额暂时待核对，不以零代替。补齐后的累计金额可以展示，但无法推算缺失的历史基准。</div>}
         <div className="table-scroll overview-refund-table">
-          <table><thead><tr><th>甲方 / 店铺</th><th>已保存成交日</th><th>导入前累计</th><th>当前累计</th><th>今日新增 / 调减</th></tr></thead>
+          <table><thead><tr><th>甲方 / 店铺</th><th title="汇总全部已保存成交日的原成交额，未扣除已发货退款及优惠券退款">累计成交金额</th><th>已保存成交日</th><th>导入前累计</th><th>当前累计</th><th>今日新增 / 调减</th></tr></thead>
             <tbody>{detailClients.map(client => <StoreGroup key={client.clientId} client={client} onView={storeId => { setOpen(false); onViewOrder(storeId, '') }} />)}</tbody>
-            {summary.hasData && <tfoot><tr><td>全部所选店铺合计</td><td>{summary.recordedDays} 天</td><td>{money(summary.before)}</td><td>{money(summary.after)}</td><td>{changeMoney(summary.amount)}</td></tr></tfoot>}
+            {summary.hasData && <tfoot><tr><td>全部所选店铺合计</td><td>{money(summary.originalSales)}</td><td>{summary.recordedDays} 天</td><td>{money(summary.before)}</td><td>{money(summary.after)}</td><td>{changeMoney(summary.amount)}</td></tr></tfoot>}
           </table>
         </div>
         {!summary.hasData && <div className="overview-refund-empty">所选店铺暂无已保存的退款汇总。</div>}
@@ -85,7 +85,7 @@ function StoreGroup({ client, onView }: {
   onView: (storeId: string) => void
 }) {
   return <>
-    <tr className="overview-refund-client"><td>{client.name}</td><td>{client.recordedDays} 天</td><td>{money(client.before)}</td><td>{money(client.after)}</td><td>{changeMoney(client.amount)}</td></tr>
-    {client.stores.map(store => <tr key={store.storeId}><td><button className="text-button" aria-label={`查看${store.name}经营结算`} onClick={() => onView(store.storeId)}>{store.name}</button></td><td>{store.recordedDays} 天</td><td>{money(store.before)}</td><td>{money(store.after)}</td><td className={store.amount != null && store.amount > 0 ? 'negative' : ''}>{changeMoney(store.amount)}</td></tr>)}
+    <tr className="overview-refund-client"><td>{client.name}</td><td>{money(client.originalSales)}</td><td>{client.recordedDays} 天</td><td>{money(client.before)}</td><td>{money(client.after)}</td><td>{changeMoney(client.amount)}</td></tr>
+    {client.stores.map(store => <tr key={store.storeId}><td><button className="text-button" aria-label={`查看${store.name}经营结算`} onClick={() => onView(store.storeId)}>{store.name}</button></td><td>{money(store.originalSales)}</td><td>{store.recordedDays} 天</td><td>{money(store.before)}</td><td>{money(store.after)}</td><td className={store.amount != null && store.amount > 0 ? 'negative' : ''}>{changeMoney(store.amount)}</td></tr>)}
   </>
 }
