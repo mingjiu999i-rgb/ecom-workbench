@@ -14,6 +14,20 @@ const cloneInitialData = (): WorkbenchData => JSON.parse(JSON.stringify(initialD
 const storedSnapshots = new Map<string, WorkbenchData>()
 const storedRevisions = new Map<string, string>()
 const requestIds = new WeakMap<WorkbenchData, string>()
+const accountWrites = new Map<string, Promise<void>>()
+// This remains dormant until the approved database cutover and matching
+// Vercel environment change. The legacy path is unchanged by default.
+export const rowStorageEnabled = import.meta.env.VITE_WORKBENCH_STORAGE === 'rows-v1'
+const rowStores = new Map<string, ReturnType<typeof import('./rowWorkbenchStore').createRowWorkbenchStore>>()
+async function rowStore(userId: string) {
+  let store = rowStores.get(userId)
+  if (!store) {
+    const { createRowWorkbenchStore, supabaseRowTransport } = await import('./rowWorkbenchStore')
+    store = createRowWorkbenchStore(supabaseRowTransport(supabase, userId))
+    rowStores.set(userId, store)
+  }
+  return store
+}
 
 const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   const hasProductCosts = Array.isArray(value.productCosts)
@@ -57,7 +71,13 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
   return { ...value, stores, products, productCosts, productLinks, skus, skuHistory: value.skuHistory || [], todos: value.todos || [], profitRecords: value.profitRecords || [], collectionRecords }
 }
 
-export async function loadWorkbenchSnapshot(userId: string, options: { signal?: AbortSignal; initialize?: boolean } = {}): Promise<{ data: WorkbenchData; storedData: WorkbenchData }> {
+export type WorkbenchLoadProfile = 'startup' | 'full'
+export async function loadWorkbenchSnapshot(userId: string, options: { signal?: AbortSignal; initialize?: boolean; profile?: WorkbenchLoadProfile } = {}): Promise<{ data: WorkbenchData; storedData: WorkbenchData; complete: boolean }> {
+  if (rowStorageEnabled) {
+    const profile = options.profile || 'full'
+    const storedData = await (await rowStore(userId)).load({ signal: options.signal, profile, concurrency: 4 }) as unknown as WorkbenchData
+    return { data: normalizeWorkbench(storedData), storedData, complete: profile === 'full' }
+  }
   const started = performance.now()
   const request = supabase.from('workbench_documents').select('data, updated_at').eq('user_id', userId)
   const { data, error, status } = await (options.signal ? request.abortSignal(options.signal) : request).maybeSingle()
@@ -68,13 +88,13 @@ export async function loadWorkbenchSnapshot(userId: string, options: { signal?: 
     storedSnapshots.set(userId, storedData)
     if (typeof data.updated_at === 'string') storedRevisions.set(userId, data.updated_at)
     else storedRevisions.delete(userId)
-    try { return { data: normalizeWorkbench(storedData), storedData } }
+    try { return { data: normalizeWorkbench(storedData), storedData, complete: true } }
     catch { throw { code: 'WORKBENCH_FORMAT', status, stage: 'normalize', elapsedMs: Math.round(performance.now() - started), message: '云端请求成功，但保存数据结构无法按当前版本加载。原始数据未修改。' } }
   }
   if (options.initialize === false) throw { code: 'WORKBENCH_NOT_FOUND', status, stage: 'query', message: '未读到当前账号的云端文档。未创建或覆盖任何数据。' }
   const initial = cloneInitialData()
   await saveWorkbench(userId, initial, options.signal)
-  return { data: initial, storedData: initial }
+  return { data: initial, storedData: initial, complete: true }
 }
 
 export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
@@ -82,6 +102,17 @@ export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
 }
 
 export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
+  const previousWrite = accountWrites.get(userId) || Promise.resolve()
+  const write = previousWrite.catch(() => {}).then(() => {
+    signal?.throwIfAborted()
+    return persistWorkbench(userId, data, signal)
+  })
+  accountWrites.set(userId, write)
+  try { await write } finally { if (accountWrites.get(userId) === write) accountWrites.delete(userId) }
+}
+
+async function persistWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
+  if (rowStorageEnabled) { await (await rowStore(userId)).save(data, signal); return }
   let previous = storedSnapshots.get(userId)
   if (!previous) {
     // Recovery after a failed initial read must establish a cloud baseline;

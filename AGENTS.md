@@ -5,3 +5,6 @@
 - 特别保护 `pddLedger.ts`、`pddCalculations.ts`、`collectionRefunds.ts`、结算导出计算，以及 `PddAnalyzer.tsx` 中的导入与结算计算流程。验证这些文件未被变更，并运行已有结算测试。
 - 如果现有已保存数据无法支持某项展示，明确说明缺少什么数据，不推算不存在的日期或金额，不以零代替未知数据，也不改动底层来补足。
 - 工作目录含有历史未提交版本。发布时以远程最新版本准备隔离源码，只合入本次需求的修改；不得将旧版本的结算文件覆盖到线上。
+- 发布基线必须同时核对 Vercel 当前正式部署的源码/资源指纹和构建开关，不能将 GitHub main 等同于线上版本。2026-10-23 的行存储部署曾领先 main。
+- 生产账号已使用行存储，正式构建必须保持 `VITE_WORKBENCH_STORAGE=rows-v1`。发布前比对 `src/services/`、`src/store/workbench.tsx`、`src/utils/workbenchSync.ts` 与当前正式版本；展示需求不得回退这些文件。
+- 发布后必须确认实际正式 bundle 包含行存储入口；仅检查 Vercel Ready、新增文案或 Git diff 不足以验证同步兼容性。不得用旧 `workbench_documents` 覆盖已切换后的行存储或设备草稿。
