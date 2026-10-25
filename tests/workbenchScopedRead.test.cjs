@@ -22,3 +22,21 @@ test('scoped paging never silently drops orphan scopes before, between or after 
 test('scope scheduling still rejects a version change and never saves a mixed snapshot',async()=>{
  const io=transportFor(fixture(),{revisionChange:true});await assert.rejects(()=>h.createRowWorkbenchStore(io.transport).load(),e=>e.code==='40001')
 })
+
+test('page progress is monotonic and does not alter the complete snapshot or account revision checks',async()=>{
+ const doc=fixture(),io=transportFor(doc),progress=[]
+ const loaded=await h.createRowWorkbenchStore(io.transport).load({onProgress:value=>progress.push(value.pages)})
+ assert.deepEqual(h.json(loaded),doc);assert.equal(progress.length,io.reads)
+ assert.deepEqual(progress,Array.from({length:io.reads},(_,index)=>index+1))
+ const changing=transportFor(doc,{revisionChange:true})
+ await assert.rejects(()=>h.createRowWorkbenchStore(changing.transport).load({onProgress(){}}),e=>e.code==='40001')
+})
+
+test('aborted page reads never establish a partial write baseline and can be retried without writes',async()=>{
+ const doc=fixture(),io=transportFor(doc),store=h.createRowWorkbenchStore(io.transport),controller=new AbortController(),progress=[]
+ await assert.rejects(()=>store.load({signal:controller.signal,onProgress(value){progress.push(value.pages);if(value.pages===3)controller.abort()}}),e=>e.name==='AbortError')
+ const reported=progress.length;await new Promise(resolve=>setImmediate(resolve));assert.equal(progress.length,reported)
+ await assert.rejects(()=>store.save(doc),/complete row baseline/)
+ assert.deepEqual(h.json(await store.load()),doc)
+ await store.save(doc)
+})
