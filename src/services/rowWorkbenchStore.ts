@@ -13,7 +13,8 @@ export type RowTransport = {
   stage: (id: string, offset: number, changes: RowChange[], signal?: AbortSignal) => Promise<void>
   commit: (id: string, signal?: AbortSignal) => Promise<string>
 }
-export type RowLoadOptions = { signal?: AbortSignal; profile?: RowLoadProfile; concurrency?: number }
+export type RowLoadProgress = { pages: number }
+export type RowLoadOptions = { signal?: AbortSignal; profile?: RowLoadProfile; concurrency?: number; onProgress?: (progress: RowLoadProgress) => void }
 const conflict = () => Object.assign(new Error('Cloud data changed; local changes retained'), { code: '40001' })
 const validRevision = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 const cursorOf = (row: StoredRow) => [row.collection, row.scope, row.record_key]
@@ -115,15 +116,30 @@ export function createRowWorkbenchStore(transport: RowTransport) {
       const normalized: RowLoadOptions = typeof AbortSignal !== 'undefined' && options instanceof AbortSignal
         ? { signal: options as AbortSignal }
         : options as RowLoadOptions
-      const { signal, profile = 'full', concurrency = 4 } = normalized
+      const { signal, profile = 'full', concurrency = 4, onProgress } = normalized
       const operation = queue.catch(() => {}).then(async () => {
         if (pending) throw new Error('Unconfirmed changes must be resolved before reloading')
         const before = await transport.head(signal)
         if (before.mode !== 'rows' || !validRevision(before.revision)) throw conflict()
+        let pages = 0
+        const reportPage = async (request: Promise<StoredRow[]>) => {
+          const page = await request
+          signal?.throwIfAborted()
+          onProgress?.({ pages: ++pages })
+          return page
+        }
+        const reader: RowTransport = { ...transport,
+          page: (after, requestSignal) => reportPage(transport.page(after, requestSignal)),
+          collectionPage: transport.collectionPage
+            ? (collection, after, requestSignal) => reportPage(transport.collectionPage!(collection, after, requestSignal))
+            : undefined,
+        }
         const rows = profile === 'startup' && transport.startupPage
-          ? await readPages(after => transport.startupPage!(after, signal), signal)
-          : await readFullRows(transport, signal, concurrency)
+          ? await readPages(after => reportPage(transport.startupPage!(after, signal)), signal)
+          : await readFullRows(reader, signal, concurrency)
+        signal?.throwIfAborted()
         const after = await transport.head(signal)
+        signal?.throwIfAborted()
         if (after.mode !== 'rows' || before.revision !== after.revision) throw conflict()
         const data = decodeWorkbenchRows(rows)
         // A startup view is intentionally incomplete and must never become a

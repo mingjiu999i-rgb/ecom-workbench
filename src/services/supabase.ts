@@ -4,6 +4,7 @@ import type { WorkbenchData } from '../types/models'
 import { normalizeCollectionRefunds } from '../utils/collectionRefunds'
 import { buildWorkbenchPatch } from '../utils/workbenchPatch'
 import { buildWorkbenchDelta } from '../utils/workbenchDelta'
+import type { RowLoadProgress } from './rowWorkbenchStore'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -72,10 +73,10 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
 }
 
 export type WorkbenchLoadProfile = 'startup' | 'full'
-export async function loadWorkbenchSnapshot(userId: string, options: { signal?: AbortSignal; initialize?: boolean; profile?: WorkbenchLoadProfile } = {}): Promise<{ data: WorkbenchData; storedData: WorkbenchData; complete: boolean }> {
+export async function loadWorkbenchSnapshot(userId: string, options: { signal?: AbortSignal; initialize?: boolean; profile?: WorkbenchLoadProfile; onProgress?: (progress: RowLoadProgress) => void } = {}): Promise<{ data: WorkbenchData; storedData: WorkbenchData; complete: boolean }> {
   if (rowStorageEnabled) {
     const profile = options.profile || 'full'
-    const storedData = await (await rowStore(userId)).load({ signal: options.signal, profile, concurrency: 4 }) as unknown as WorkbenchData
+    const storedData = await (await rowStore(userId)).load({ signal: options.signal, profile, concurrency: 4, onProgress: options.onProgress }) as unknown as WorkbenchData
     return { data: normalizeWorkbench(storedData), storedData, complete: profile === 'full' }
   }
   const started = performance.now()
