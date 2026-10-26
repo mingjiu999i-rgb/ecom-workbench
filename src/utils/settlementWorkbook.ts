@@ -298,31 +298,39 @@ function buildDetailSheet(store: Store, rows: CollectionRecord[], startDate: str
   const sheet = XLSX.utils.aoa_to_sheet([])
   setCell(sheet, 1, 0, `${store.name}订单回款明细`, titleStyle())
   setCell(sheet, 2, 0, `本页只统计“${store.name}”。退款按原订单成交日期回填，有效订单销售额和利润随退款更新；推广费按消耗日期归属。`, noteStyle)
-  const headers = ['店铺名称', '成交日期', '订单数', '订单成交额', '已发货退款', '优惠券退款', '有效订单销售额', '基础技术服务费', '售后补偿消费者', '小额打款', '申诉补回', '商品成本', '推广费', '预估盈亏', '订单净回款', '未回款金额', '当前盈亏']
+  const headers = ['店铺名称', '成交日期', '订单数', '订单成交额', '已发货退款', '优惠券退款', '有效订单销售额', '基础技术服务费', '售后补偿消费者', '小额打款', '申诉补回', '商品成本', '推广费', '预估盈亏', '订单净回款', '未回款金额', '当前盈亏', '均单售后']
+  // Export-only display metric; never write it back to the saved records.
+  const hasAfterSaleInputs = (item: Pick<CollectionRecord, 'orderCount' | 'shippedRefund' | 'couponRefund'>) =>
+    [item.orderCount, item.shippedRefund, item.couponRefund].every(Number.isFinite)
+  const averageAfterSale = (item: Pick<CollectionRecord, 'orderCount' | 'shippedRefund' | 'couponRefund'>): CellValue =>
+    hasAfterSaleInputs(item) && item.orderCount > 0 ? (item.shippedRefund + item.couponRefund) / item.orderCount : ''
   headers.forEach((label, column) => setCell(sheet, 5, column, label, detailHeaderStyle))
   const total = combineCollections(rows)
   const totalValues: CellValue[] = total
     ? [store.name, `${startDate} 至 ${endDate}`, total.orderCount, total.originalSales, total.shippedRefund, total.couponRefund, total.effectiveSales, total.basicServiceFee, total.afterSaleCompensation, total.smallPayment, total.appealReimbursement, total.productCost ?? '', total.promotionFee, total.estimatedProfit ?? '', total.currentNet, total.unsettledAmount, total.profit ?? '']
     : [store.name, '暂无该店铺数据', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+  totalValues.push(total && rows.every(hasAfterSaleInputs) ? averageAfterSale(total) : '')
   totalValues.forEach((value, column) => setCell(sheet, 6, column, value, { ...(column >= 3 ? moneyStyle : bodyStyle), font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: colors.text } }, fill: { patternType: 'solid', fgColor: { rgb: colors.paleBlue } } }))
   ;[...rows].sort((a, b) => b.date.localeCompare(a.date)).forEach((item, index) => {
     const values: CellValue[] = ['', item.date, item.orderCount, item.originalSales, item.shippedRefund, item.couponRefund, item.effectiveSales, item.basicServiceFee, item.afterSaleCompensation, item.smallPayment, item.appealReimbursement, item.productCost ?? '', item.promotionFee, item.estimatedProfit ?? '', item.currentNet, item.unsettledAmount, item.profit ?? '']
+    values.push(averageAfterSale(item))
     values.forEach((value, column) => {
       const style = column >= 3 ? moneyStyle : bodyStyle
       setCell(sheet, index + 7, column, value, style)
     })
   })
   const lastRow = Math.max(rows.length + 6, 7)
-  applyWhiteCanvas(sheet, lastRow, 16)
+  const lastColumn = headers.length - 1
+  applyWhiteCanvas(sheet, lastRow, lastColumn)
   sheet['!merges'] = [
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 16 } },
-    { s: { r: 2, c: 0 }, e: { r: 2, c: 16 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: lastColumn } },
   ]
-  sheet['!cols'] = [22, 22, 11, 15, 15, 15, 17, 17, 17, 14, 14, 15, 15, 15, 15, 15, 15].map(wch => ({ wch }))
+  sheet['!cols'] = [22, 22, 11, 15, 15, 15, 17, 17, 17, 14, 14, 15, 15, 15, 15, 15, 15, 15].map(wch => ({ wch }))
   sheet['!rows'] = Array.from({ length: Math.max(rows.length + 8, 9) }, (_, index) => ({ hpt: index === 5 ? 34 : index === 1 ? 25 : 23 }))
   sheet['!freeze'] = { xSplit: 2, ySplit: 6, topLeftCell: 'C7', activePane: 'bottomRight', state: 'frozen' }
   sheet['!sheetViews'] = [{ showGridLines: false }]
-  sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 1, c: 0 }, e: { r: lastRow, c: 16 } })
+  sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 1, c: 0 }, e: { r: lastRow, c: lastColumn } })
   return sheet
 }
 
