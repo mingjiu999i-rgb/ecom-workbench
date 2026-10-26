@@ -45,7 +45,7 @@ test('only the appended spec section uses yesterday; old and current orders neve
     const grid = XLSX.utils.sheet_to_json(workbook.Sheets['总览'], { header: 1, raw: true })
     const section = grid.slice(grid.findIndex(r => r[0] === '规格销量汇总'))
     assert.equal(section[1][0], '昨日 2026-10-19，相同规格编码跨店合计。')
-    assert.deepEqual(section.filter(r => r[0] === '000123').map(r => r[8]), [5])
+    assert.deepEqual(section.filter(r => r[0] === '000123').map(r => r[3]), [5])
   }
   assert.equal(JSON.stringify(data), before)
 })
@@ -66,7 +66,7 @@ test('missing dates and quantities in the yesterday section stay unknown instead
     const sheet = XLSX.utils.aoa_to_sheet([['existing financial cell']])
     appendSpecSales(sheet, imported([row(), unknown]), { clientId: 'c', startDate: '2026-09-15', endDate: '2026-10-20' })
     const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true })
-    assert.equal(grid.find(r => r[0] === '000123')[8], '待补数据')
+    assert.equal(grid.find(r => r[0] === '000123')[3], '待补数据')
     assert(grid.some(r => typeof r[0] === 'string' && r[0].includes('当前销量不完整')))
   }
 })
@@ -113,7 +113,7 @@ test('screenshot duplicate specs merge for export: JDG2Z 22+1=23 and JDG3D 45+1=
   const workbook = createSettlementWorkbook(data, { clientId: 'c' })
   const grid = XLSX.utils.sheet_to_json(workbook.Sheets['总览'], { header: 1, raw: true })
   const rows = grid.filter(r => ['JDG2Z', 'JDG3D'].includes(r[0]))
-  assert.deepEqual(rows.map(r => [r[0], r[8]]), [['JDG2Z', 23], ['JDG3D', 46]])
+  assert.deepEqual(rows.map(r => [r[0], r[3]]), [['JDG2Z', 23], ['JDG3D', 46]])
   assert.equal(JSON.stringify(data), before)
 })
 
