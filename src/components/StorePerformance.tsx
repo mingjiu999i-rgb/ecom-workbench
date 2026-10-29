@@ -5,6 +5,7 @@ import { useWorkbench } from '../store/workbench'
 import { buildPerformance, shiftDate, summarizePerformance, validDate, type PerformanceSummary } from '../utils/performanceSummary'
 import { Modal } from './Overlay'
 import { OverviewRefundMetric } from './OverviewRefundActivity'
+import { PerformanceTrend } from './PerformanceTrend'
 
 const money = (value: number | null) => value == null ? '—' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const percent = (value: number | null) => value == null ? '—' : `${(value * 100).toFixed(2)}%`
@@ -62,7 +63,6 @@ export function StorePerformance() {
     : <span className="cell-sub">暂无数据</span>
   const profitButton = (summary: PerformanceSummary, label: string, ids: string[]) => <button className={`amount-button ${summary.profit != null && summary.profit < 0 ? 'negative' : 'positive'}`} aria-label={`查看${label}盈利构成`} disabled={!summary.hasData} onClick={() => show('profit', label, ids)}>{money(summary.profit)}</button>
   const metrics = [['销售额', performance.total.sales, CircleDollarSign, 'blue'], ['运营费用', performance.total.operationFee, BadgePercent, 'violet'], ['甲方盈利', performance.total.profit, TrendingUp, 'green'], ['已发货退款', performance.total.shippedRefund, RotateCcw, 'red']] as const
-  const refundMax = Math.max(1, ...performance.trend.map(row => row.amount || 0))
   const previousRefund = performance.previous?.shippedRefund
   const comparison = previousRefund == null ? '上期暂无数据' : previousRefund === 0 ? '上期退款为零' : `较前一等长周期${(performance.total.shippedRefund || 0) >= previousRefund ? '增加' : '减少'} ${percent(Math.abs((performance.total.shippedRefund || 0) - previousRefund) / previousRefund)}`
   const overdueStores = performance.stores.filter(store => store.missingYesterday)
@@ -78,7 +78,7 @@ export function StorePerformance() {
       <p className="performance-note">已发货退款按原订单成交日期回填，后续退款更新原日期的销售额和利润。{performance.total.legacyRefund && '部分数据仍为旧版退款口径，请在经营结算重新导入报表。'}{performance.total.partial && '销售额、运营费用和盈利按已保存的产品数据汇总；金额可能不完整，可点击“部分汇总”查看待处理日期。'}</p>
       {!performance.total.recordCount ? <div className="performance-empty">{rangeLabel} 暂无已保存的经营数据，请到经营结算导入报表。<button className="text-button" onClick={() => detail(selectedStore?.id || allIds[0] || '')}>前往经营结算 <ArrowRight size={14} /></button></div> : <>
         <div className="refund-overview"><div><strong>同期订单已发货退款率 <b>{percent(performance.total.refundRate)}</b></strong><span>同期订单已发货退款 ÷ 同期订单成交额</span></div><button className="text-button" onClick={() => show('refund', selectedStore?.name || '全部店铺')}>本期退款来源 <ArrowRight size={14} /></button></div>
-        <div className="refund-trend"><div className="refund-trend-heading"><strong>退款金额趋势</strong><span title={`${performance.previousStart} 至 ${performance.previousEnd}`}>{comparison}</span></div><p>{performance.monthly ? '按月汇总，暂无记录的月份不展示。' : '按原订单成交日期汇总，灰色表示当天尚无保存记录。'}点击日期可查看对应时段总览。</p><div className="refund-bars" role="group" aria-label="退款金额趋势">{performance.trend.map(row => <button key={row.date} title={`${row.date}：${money(row.amount)}${row.amount == null ? '（暂无保存记录）' : ''}`} aria-label={`${row.date}退款${row.amount == null ? '暂无记录' : money(row.amount)}`} onClick={() => changeFilter({ period: 'custom', start: row.start, end: row.end })}><span className="refund-bar-track"><i className={row.amount == null ? 'no-data' : ''} style={{ height: `${row.amount == null ? 4 : Math.max(3, (row.amount / refundMax) * 100)}%` }} /></span><span>{performance.monthly ? row.date : row.date.slice(5)}</span></button>)}</div></div>
+        <PerformanceTrend trend={performance.trend} monthly={performance.monthly} comparison={comparison} comparisonPeriod={`${performance.previousStart} 至 ${performance.previousEnd}`} onSelect={(start, end) => changeFilter({ period: 'custom', start, end })} />
         <div className="table-caption"><div><strong>各甲方汇总</strong><span>{rangeLabel}</span></div><span>{performance.total.recordCount} 条店铺日经营记录</span></div>
         <div className="table-scroll"><table><thead><tr><th>甲方</th><th>销售额</th><th>运营费用</th><th>甲方盈利</th><th>已发货退款</th><th>同期订单退款率</th><th>数据完整性</th></tr></thead><tbody>{performance.clients.map(client => { const ids = performance.stores.filter(store => store.clientId === client.id).map(store => store.id); return <tr key={client.id}><td className="cell-main">{client.name}</td><td>{money(client.sales)}</td><td className="performance-fee">{money(client.operationFee)}</td><td>{profitButton(client, client.name, ids)}</td><td className="negative">{money(client.shippedRefund)}</td><td>{percent(client.refundRate)}</td><td>{status(client, client.name, ids)}</td></tr> })}</tbody></table></div>
       </>}
