@@ -1,34 +1,33 @@
-.performance-trend { --trend-profit: #3976e8; --trend-refund: #ed91a9; --trend-result: #24a580; --trend-unknown: #dce3ed; }
-.performance-trend-legend { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 12px 0 15px; color: #64748b; font-size: 12px; }
-.performance-trend-legend span { display: inline-flex; align-items: center; gap: 7px; }
-.performance-trend-legend i { width: 12px; height: 10px; border-radius: 2px; }
-.performance-trend-legend .legend-profit { height: 4px; background: var(--trend-profit); }
-.performance-trend-legend .legend-refund { background: var(--trend-refund); }
-.performance-trend-legend .legend-result { background: var(--trend-result); }
-.performance-trend-detail { display: flex; flex-wrap: wrap; gap: 7px 22px; min-height: 39px; margin-bottom: 12px; color: #64748b; font-size: 12px; line-height: 1.7; }
-.performance-trend-detail strong { color: #334155; }
-.performance-trend-detail b { font-weight: 600; }
-.performance-trend-detail .trend-profit-text { color: #3269ca; }
-.performance-trend-detail .trend-refund-text { color: #bd5773; }
-.performance-trend-detail .trend-result-text { color: #168365; }
-.performance-trend-chart { display: flex; gap: 10px; }
-.performance-trend-axis { position: relative; flex: 0 0 78px; height: 176px; margin-top: 4px; color: #74829a; font-size: 10px; }
+.performance-trend { --trend-profit: #25a888; --trend-refund: #e99bb0; }
+.performance-trend-legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 9px 0 22px; }
+.performance-trend-legend > button { display: inline-flex; align-items: center; gap: 7px; padding: 5px 0; border: 0; background: transparent; color: #475569; font-size: 12px; cursor: pointer; }
+.performance-trend-legend > button[aria-pressed="false"] { opacity: .38; }
+.performance-trend .legend-refund { background: var(--trend-refund); }
+.performance-trend .legend-profit { background: var(--trend-profit); }
+.performance-trend-legend i, .performance-trend-tooltip i { display: inline-block; flex: 0 0 10px; width: 10px; height: 10px; border-radius: 2px; }
+.performance-trend-chart { position: relative; display: flex; gap: 10px; }
+.performance-trend-axis { position: relative; flex: 0 0 78px; height: 200px; margin-top: 4px; color: #74829a; font-size: 10px; }
 .performance-trend-axis > span { position: absolute; right: 0; top: 0; white-space: nowrap; transform: translateY(-50%); }
 .performance-trend-axis > .axis-bottom { top: 100%; }
 .performance-trend-bars { display: flex; flex: 1; min-width: 0; overflow-x: auto; padding: 4px 2px 7px; }
 .performance-trend-bars > button { flex: 1 0 30px; min-width: 0; padding: 0; border: 0; background: transparent; color: #74829a; cursor: pointer; }
-.performance-trend-track { position: relative; display: block; margin-bottom: 10px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 43px, #edf0f7 43px, #edf0f7 44px); }
+.performance-trend-track { position: relative; display: block; margin-bottom: 10px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 49px, #edf0f7 49px, #edf0f7 50px); }
 .performance-trend-zero { position: absolute; left: 0; right: 0; border-top: 1px solid #b9c5d5; }
-.performance-trend-column { position: absolute; top: 0; bottom: 0; left: 50%; width: 55%; max-width: 27px; transform: translateX(-50%); }
-.performance-trend-column > i { position: absolute; left: 0; width: 100%; }
-.trend-result-segment { background: var(--trend-result); border-radius: 2px; }
-.trend-refund-segment { background: var(--trend-refund); border-radius: 2px; }
-.performance-trend-column > .trend-refund-segment.is-overlap { left: 20%; width: 60%; border-radius: 0; }
-.trend-profit-marker, .trend-result-marker, .trend-unknown-marker { height: 4px; transform: translateY(-50%); border-radius: 1px; }
-.performance-trend-column > .trend-profit-marker { left: -3px; width: calc(100% + 6px); background: var(--trend-profit); }
-.trend-result-marker { background: var(--trend-result); }
-.trend-unknown-marker { background: var(--trend-unknown); }
+.performance-trend-bar { position: absolute; width: 34%; max-width: 22px; border-radius: 3px; }
+.performance-trend-bar.series-refund { left: 12%; background: var(--trend-refund); }
+.performance-trend-bar.series-profit { left: 54%; background: var(--trend-profit); }
+.mode-refund .performance-trend-bar.series-refund, .mode-profit .performance-trend-bar.series-profit { left: 50%; width: 60%; transform: translateX(-50%); }
+.performance-trend-unknown { position: absolute; font-size: 10px; line-height: 2px; color: #c1cad7; }
+.performance-trend-unknown.series-refund { left: 12%; }
+.performance-trend-unknown.series-profit { left: 54%; }
+.mode-refund .performance-trend-unknown.series-refund, .mode-profit .performance-trend-unknown.series-profit { left: 50%; transform: translateX(-50%); }
 .performance-trend-date { font-size: 10px; white-space: nowrap; }
 .performance-trend-bars > button:hover .performance-trend-track, .performance-trend-bars > button:focus-visible .performance-trend-track { background-color: #f0f4fa; }
-.performance-trend-bars > button:focus-visible { outline: 2px solid #6578ff; outline-offset: -2px; border-radius: 4px; }
-@media (max-width: 600px) { .performance-trend-axis { flex-basis: 65px; font-size: 9px; } .performance-trend-chart { gap: 6px; } .performance-trend-detail { gap: 5px 14px; } }
+.performance-trend-bars > button:focus-visible, .performance-trend-legend > button:focus-visible { outline: 2px solid #6578ff; outline-offset: 2px; border-radius: 3px; }
+.performance-trend-tooltip { position: absolute; z-index: 3; width: 248px; max-width: calc(100% - 16px); padding: 13px 15px; border: 1px solid #e5eaf2; border-radius: 9px; background: #fff; box-shadow: 0 8px 28px #1b2b481c; color: #334155; font-size: 12px; pointer-events: none; }
+.performance-trend-tooltip > strong { display: block; margin-bottom: 9px; }
+.performance-trend-tooltip > div { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.performance-trend-tooltip span { display: inline-flex; align-items: center; gap: 7px; color: #64748b; }
+.performance-trend-tooltip b { font-weight: 600; white-space: nowrap; }
+.performance-trend-tooltip .performance-trend-difference { padding-top: 9px; border-top: 1px solid #edf0f7; }
+@media (max-width: 600px) { .performance-trend-axis { flex-basis: 65px; font-size: 9px; } .performance-trend-chart { gap: 6px; } .performance-trend-legend > button { min-height: 36px; } }
