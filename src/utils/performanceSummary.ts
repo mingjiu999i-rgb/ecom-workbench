@@ -85,14 +85,27 @@ export function buildPerformance(data: WorkbenchData, start: string, end: string
   })
   const clients = data.clients.filter(client => !storeId || selected.some(store => store.clientId === client.id)).map(client => ({ ...client, ...summarizePerformance(data, start, end, new Set(selected.filter(store => store.clientId === client.id).map(store => store.id))) }))
   const collections = data.collectionRecords.filter(row => ids.has(row.storeId) && row.date >= start && row.date <= end)
+  const products = data.profitRecords.filter(row => ids.has(row.storeId) && row.date >= start && row.date <= end)
   const days = Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1
   const monthly = days > 62
-  const keys = monthly ? [...new Set(collections.map(row => row.date.slice(0, 7)))].sort() : Array.from({ length: Math.max(0, days) }, (_, i) => shiftDate(start, i))
+  const keys = monthly ? [...new Set([...collections, ...products].map(row => row.date.slice(0, 7)))].sort() : Array.from({ length: Math.max(0, days) }, (_, i) => shiftDate(start, i))
   const trend = keys.map(date => {
     const rows = collections.filter(row => monthly ? row.date.startsWith(date) : row.date === date)
+    const profitRows = products.filter(row => monthly ? row.date.startsWith(date) : row.date === date)
     const bucketStart = monthly ? `${date}-01` : date
     const bucketEnd = monthly ? shiftDate(`${Number(date.slice(0, 4)) + (date.slice(5) === '12' ? 1 : 0)}-${date.slice(5) === '12' ? '01' : String(Number(date.slice(5)) + 1).padStart(2, '0')}-01`, -1) : date
-    return { date, start: bucketStart < start ? start : bucketStart, end: bucketEnd > end ? end : bucketEnd, amount: rows.length ? sum(rows, row => row.shippedRefund) : null }
+    const summary = summarizePerformance({ ...data, collectionRecords: rows, profitRecords: profitRows }, start, end, ids)
+    const missingAmounts = profitRows.some(row => ![row.estimatedProfit, row.operationFee, row.amount, row.cost, row.promotion].every(Number.isFinite))
+    const profitIssues = summary.issues.filter(issue => issue.kind === 'cost' || issue.kind === 'profit')
+    const missingPromotion = rows.some(row => 'promotionFeeKnown' in row && row.promotionFeeKnown === false)
+    const profitNote = !profitRows.length ? '暂无已保存产品利润，无法确认扣运营费用后的盈亏'
+      : missingAmounts ? '缺少已保存的预估利润或费用金额'
+        : missingPromotion ? '缺少原成交日推广费，盈亏待补全'
+          : profitIssues.length ? [...new Set(profitIssues.map(issue => issue.message))].join('；') : null
+    // Saved product estimatedProfit already includes operation fees. Read only; never deduct twice.
+    const profit = profitNote ? null : sum(profitRows, row => row.estimatedProfit)
+    return { date, start: bucketStart < start ? start : bucketStart, end: bucketEnd > end ? end : bucketEnd, amount: rows.length ? sum(rows, row => row.shippedRefund) : null,
+      profit, profitNote, profitPartial: profit != null && summary.partial }
   })
   // Very long custom ranges can precede year 0000; don't manufacture an invalid comparison.
   const previousEnd = shiftDate(start, -1), previousStart = shiftDate(start, -days)
