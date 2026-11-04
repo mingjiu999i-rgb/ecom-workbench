@@ -100,3 +100,56 @@ test('input specifications and candidate records remain unchanged', () => {
   assert.equal(matchBatchSkuCost('', costs), '')
   assert.equal(matchBatchSkuCost('2斤大果150-200g', []), '')
 })
+
+const countedCosts = [
+  choice('count-1-small', '1斤小果（小果 约6-9个/斤）'),
+  choice('count-2-small', '2斤小果（小果 约6-9个/斤）'),
+  choice('count-1-medium', '1斤中果（小果 约4-6个/斤）'),
+  choice('count-2-medium', '2斤中果（小果 约4-6个/斤）'),
+  choice('count-3-medium', '3斤中果（小果 约4-6个/斤）'),
+  choice('count-2-large', '2斤大果（小果 约2-4个/斤）'),
+  choice('count-3-large', '3斤大果（小果 约2-4个/斤）'),
+]
+
+test('the seven count-per-jin screenshot names match their unique real specification patterns', () => {
+  const rows = [
+    ['净重1斤小果【粉糯香甜真好吃】约6-9个/斤', 'count-1-small'],
+    ['净重2斤小果【粉糯香甜真好吃】约6-9个/斤', 'count-2-small'],
+    ['净重1斤中果【粉糯香甜真好吃】约4-6个/斤', 'count-1-medium'],
+    ['净重2斤中果【粉糯香甜真好吃】约4-6个/斤', 'count-2-medium'],
+    ['净重3斤中果【粉糯香甜真好吃】约4-6个/斤', 'count-3-medium'],
+    ['净重2斤中大果【粉糯香甜真好吃】约2-4个/斤', 'count-2-large'],
+    ['净重3斤中大果【粉糯香甜真好吃】约2-4个/斤', 'count-3-large'],
+  ]
+  const before = structuredClone(countedCosts)
+  for (const [name, id] of rows) assert.equal(matchBatchSkuCost(name, countedCosts), id, name)
+  assert.deepEqual(countedCosts, before)
+})
+
+test('count-per-jin keys normalize full-width text, count order, approximate labels and equivalent total units', () => {
+  for (const name of ['净重２斤中果【粉糯香甜真好吃】约４～６颗／斤', '中果 每斤约4至6个 净重1公斤', '约4-6个/斤 净重1kg 中果', '净重2斤 中果(每斤4-6个)']) {
+    assert.equal(matchBatchSkuCost(name, countedCosts), 'count-2-medium', name)
+  }
+})
+
+test('count keys preserve weight, grade, exact interval and denominator conflicts without estimating gram weights', () => {
+  for (const name of ['2斤中果约6-9个/斤', '2斤小果约4-6个/斤', '2斤中大果约4-6个/斤', '2斤中大果约2-5个/斤', '2斤特大果约2-4个/斤', '12斤中果约4-6个/斤', '0.5斤小果约6-9个/斤', '2斤中果约4-6个/公斤', '2斤中果约6-4个/斤', '2斤小果约0-9个/斤', '2斤中果', '中果约4-6个/斤', '2斤中果小果约4-6个/斤']) {
+    assert.equal(matchBatchSkuCost(name, countedCosts), '', name)
+  }
+  assert.equal(matchBatchSkuCost('1斤小果约6-9个/斤', [choice('gram', '1斤小果60-100g')]), '')
+  assert.equal(matchBatchSkuCost('2斤中大果100-150g', [choice('gram', '2斤大果100-150g')]), '')
+})
+
+test('equivalent count candidates remain ambiguous instead of picking by grade alias or order', () => {
+  const duplicate = [...countedCosts, choice('alias', '2斤中大果（每斤2-4个）')]
+  assert.equal(matchBatchSkuCost('净重2斤中大果约2-4个/斤', duplicate), '')
+  assert.equal(matchBatchSkuCost('净重2斤中大果约2-4个/斤', duplicate.reverse()), '')
+})
+
+test('count keys preserve flavor and unknown descriptors while ignoring only recognized promotional wording', () => {
+  const flavored = [choice('red', '2斤红心中果（每斤4-6个）'), choice('yellow', '2斤黄心中果（每斤4-6个）')]
+  assert.equal(matchBatchSkuCost('净重2斤红心中果【粉糯香甜真好吃】约4-6个/斤', flavored), 'red')
+  assert.equal(matchBatchSkuCost('净重2斤中果约4-6个/斤', flavored), '')
+  assert.equal(matchBatchSkuCost('净重2斤红心中果约4-6个/斤', [flavored[1]]), '')
+  assert.equal(matchBatchSkuCost('净重2斤中果【红心】约4-6个/斤', countedCosts), '')
+})
