@@ -34,7 +34,7 @@ export function ProductCosts() {
     const product = data.products.find(row => row.id === item.productId)
     const client = data.clients.find(row => row.id === product?.clientId)
     const matchesQuery = `${product?.name || ''} ${client?.name || ''} ${item.skuCode} ${item.specification}`.toLowerCase().includes(query.trim().toLowerCase())
-    return (!clientId || product?.clientId === clientId) && matchesQuery
+    return !isProductArchived(product) && (!clientId || product?.clientId === clientId) && matchesQuery
   }), [data.productCosts, data.products, data.clients, clientId, query])
   const previewRows = useMemo<PreviewRow[]>(() => {
     const keys = importRows.map(row => `${normalizeKey(row.clientName)}|${normalizeKey(row.productName)}|${normalizeKey(row.skuCode)}`)
