@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createId, useWorkbench } from '../store/workbench'
 import { StorePerformance } from '../components/StorePerformance'
-import { displayDate, getSkuContext, isActiveProductLink } from '../utils/selectors'
+import { displayDate, getSkuContext } from '../utils/selectors'
+import { isOperationalProductLink } from '../utils/productArchive'
 
 const localDate = (date: Date) => date.toLocaleDateString('sv-SE')
 
@@ -16,13 +17,13 @@ export function Dashboard() {
   const [todoClientId, setTodoClientId] = useState('')
   const [todoStoreId, setTodoStoreId] = useState('')
   const activeStores = data.stores.filter(store => store.storeStatus !== '暂停')
-  const activeLinks = data.productLinks.filter(link => isActiveProductLink(data, link.id))
+  const activeLinks = data.productLinks.filter(link => isOperationalProductLink(data, link.id))
   const activeLinkIds = new Set(activeLinks.map(link => link.id))
   const metrics = [
     ['甲方', data.clients.length, Building2, 'blue'], ['店铺', activeStores.length, Store, 'violet'],
     ['商品链接', activeLinks.length, Link2, 'cyan'], ['SKU', data.skus.filter(sku => activeLinkIds.has(sku.productLinkId)).length, Box, 'indigo'],
   ] as const
-  const recent = data.operations.filter(operation => operation.type !== '到手价' && isActiveProductLink(data, operation.productLinkId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
+  const recent = data.operations.filter(operation => operation.type !== '到手价' && isOperationalProductLink(data, operation.productLinkId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)
   const datedTodos = data.todos.filter(todo => todo.date === todoDate).sort((a, b) => Number(a.completed) - Number(b.completed) || a.createdAt.localeCompare(b.createdAt))
   const todoStores = activeStores.filter(store => !todoClientId || store.clientId === todoClientId)
   const addTodo = () => {

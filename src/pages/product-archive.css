@@ -1,0 +1,5 @@
+.product-archive-note { margin: 0; padding: 14px 22px; color: #74829a; font-size: 12px; line-height: 1.6; }
+.product-archive-actions { white-space: nowrap; }
+.product-archive-actions .text-button { display: inline-flex; align-items: center; gap: 5px; }
+.product-archive-filter { display: inline-flex; align-items: center; gap: 7px; padding: 14px 22px; color: #64748b; font-size: 12px; }
+.product-archive-filter input { width: 15px; height: 15px; margin: 0; }

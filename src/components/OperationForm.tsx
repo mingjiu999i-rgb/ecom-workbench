@@ -4,7 +4,7 @@ import { createId, useWorkbench } from '../store/workbench'
 import type { AdjustmentReason, AdjustmentType, Operation, Sku } from '../types/models'
 import { appendSkuHistory } from '../utils/skuHistory'
 import { calculatedBreakEvenRoi, totalCost } from '../utils/calculations'
-import { isActiveProductLink } from '../utils/selectors'
+import { isOperationalProductLink } from '../utils/productArchive'
 
 const types: AdjustmentType[] = ['售价', '成本', '投产', '活动', '活动价', 'SKU', '其他']
 const reasons: AdjustmentReason[] = ['平台比价', '竞品变化', '报活动', '活动结束', '成本变化', '推广调整', '测试', '手动修改', '其他']
@@ -33,7 +33,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
   const [reason, setReason] = useState<AdjustmentReason>('平台比价')
   const [remark, setRemark] = useState('')
   const [createdAt, setCreatedAt] = useState(new Date().toISOString().slice(0, 16))
-  const availableLinks = data.productLinks.filter(link => isActiveProductLink(data, link.id) || link.id === firstLink?.id)
+  const availableLinks = data.productLinks.filter(link => isOperationalProductLink(data, link.id) || link.id === firstLink?.id)
   const skus = data.skus.filter(s => !linkId || s.productLinkId === linkId)
   const selectedClient = data.clients.find(x => x.id === clientId)
   const selectedStore = data.stores.find(x => x.id === storeId)
