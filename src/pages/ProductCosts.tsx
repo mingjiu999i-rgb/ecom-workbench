@@ -7,6 +7,7 @@ import { createId, useWorkbench } from '../store/workbench'
 import type { ProductCost } from '../types/models'
 import { calculatedBreakEvenRoi, money } from '../utils/calculations'
 import { parseCostImportFile, type CostImportRow } from '../utils/costImport'
+import { isProductArchived, productOptions } from '../utils/productArchive'
 
 const emptyCost = (productId = ''): ProductCost => ({ id: '', productId, skuCode: '', specification: '', totalCost: 0 })
 const normalizeKey = (value: string) => value.trim().toLocaleLowerCase('zh-CN')
@@ -176,7 +177,7 @@ export function ProductCosts() {
 
   return <div className="page">
     {returnTo.startsWith('/profit-preview?') && <div className="settlement-detail-context"><Link className="text-button" to={returnTo}>← 返回经营结算</Link><span>补充成本后，请重新导入报表更新经营结算。</span></div>}
-    <div className="page-heading"><div><span className="eyebrow">成本资料库</span><h1>产品成本</h1><p>成本归属产品，并自动继承产品所属甲方。结算订单的成本在首次导入时锁定，修改只影响后续新导入的订单。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setBatchOpen(true)}><Upload size={17} />批量上传成本</button><button className="button primary" onClick={() => setEditing(emptyCost(data.products[0]?.id))}><Plus size={17} />新增成本</button></div></div>
+    <div className="page-heading"><div><span className="eyebrow">成本资料库</span><h1>产品成本</h1><p>成本归属产品，并自动继承产品所属甲方。结算订单的成本在首次导入时锁定，修改只影响后续新导入的订单。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setBatchOpen(true)}><Upload size={17} />批量上传成本</button><button className="button primary" onClick={() => setEditing(emptyCost(productOptions(data)[0]?.id))}><Plus size={17} />新增成本</button></div></div>
     <section className="filter-bar cost-filter">
       <div className="filter-title"><Calculator size={17} /><span>SKU 成本</span></div>
       <Select aria-label="甲方筛选" value={clientId} onChange={event => setClientId(event.target.value)}><option value="">全部甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select>
@@ -186,7 +187,7 @@ export function ProductCosts() {
     <section className="panel table-panel">
       <div className="table-caption"><div><strong>成本列表</strong><span>共 {rows.length} 条</span></div></div>
       <div className="table-scroll"><table><thead><tr><th>商品名称</th><th>所属甲方</th><th>SKU 编码</th><th>售卖规格</th><th>总成本</th><th>操作</th></tr></thead><tbody>
-        {rows.map(item => { const product = data.products.find(row => row.id === item.productId); return <tr key={item.id}><td><strong className="cell-main">{product?.name || '未关联'}</strong></td><td>{data.clients.find(row => row.id === product?.clientId)?.name || '未关联'}</td><td><strong className="cell-main">{item.skuCode}</strong></td><td>{item.specification}</td><td className="emphasis">{money(item.totalCost)}</td><td><div className="actions"><button className="icon-button" onClick={() => setEditing(item)} aria-label={`编辑 ${item.skuCode}`}><Pencil size={15} /></button><button className="icon-button danger" onClick={() => remove(item)} aria-label={`删除 ${item.skuCode}`}><Trash2 size={15} /></button></div></td></tr> })}
+        {rows.map(item => { const product = data.products.find(row => row.id === item.productId); return <tr key={item.id}><td><strong className="cell-main">{product?.name || '未关联'}</strong>{isProductArchived(product) && <span className="cell-sub">已停用 · 历史成本</span>}</td><td>{data.clients.find(row => row.id === product?.clientId)?.name || '未关联'}</td><td><strong className="cell-main">{item.skuCode}</strong></td><td>{item.specification}</td><td className="emphasis">{money(item.totalCost)}</td><td><div className="actions"><button className="icon-button" onClick={() => setEditing(item)} aria-label={`编辑 ${item.skuCode}`}><Pencil size={15} /></button><button className="icon-button danger" onClick={() => remove(item)} aria-label={`删除 ${item.skuCode}`}><Trash2 size={15} /></button></div></td></tr> })}
       </tbody></table></div>
       {!rows.length && <div className="empty"><strong>暂无产品成本</strong><span>点击右上角新增 SKU 成本资料</span></div>}
     </section>
@@ -217,12 +218,12 @@ function CostModal({ initial, onClose, onSave }: { initial: ProductCost; onClose
   const [item, setItem] = useState(initial)
   const initialProduct = data.products.find(product => product.id === initial.productId)
   const [selectedClientId, setSelectedClientId] = useState(initialProduct?.clientId || data.clients[0]?.id || '')
-  const productsForClient = data.products.filter(product => product.clientId === selectedClientId)
+  const productsForClient = productOptions(data, initial.id ? initial.productId : '').filter(product => product.clientId === selectedClientId)
   const valid = item.productId && item.skuCode.trim() && item.specification.trim() && Number.isFinite(item.totalCost) && item.totalCost >= 0
   return <Modal title={`${item.id ? '编辑' : '新增'}产品成本`} onClose={onClose}>
     <div className="form-grid modal-body">
-      <Field label="所属甲方" full><Select value={selectedClientId} onChange={event => { const nextClientId = event.target.value; const firstProduct = data.products.find(product => product.clientId === nextClientId); setSelectedClientId(nextClientId); setItem(current => ({ ...current, productId: firstProduct?.id || '' })) }}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select></Field>
-      <Field label="商品名称" full><Select value={item.productId} onChange={event => setItem(current => ({ ...current, productId: event.target.value }))}><option value="">{selectedClientId && !productsForClient.length ? '请先在基础资料中为该甲方新增产品' : '请选择商品'}</option>{productsForClient.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}</Select></Field>
+      <Field label="所属甲方" full><Select value={selectedClientId} onChange={event => { const nextClientId = event.target.value; const firstProduct = productOptions(data).find(product => product.clientId === nextClientId); setSelectedClientId(nextClientId); setItem(current => ({ ...current, productId: firstProduct?.id || '' })) }}><option value="">请选择甲方</option>{data.clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</Select></Field>
+      <Field label="商品名称" full><Select value={item.productId} onChange={event => setItem(current => ({ ...current, productId: event.target.value }))}><option value="">{selectedClientId && !productsForClient.length ? '请先在基础资料中为该甲方新增产品' : '请选择商品'}</option>{productsForClient.map(product => <option key={product.id} value={product.id}>{product.name}{isProductArchived(product) ? '（已停用）' : ''}</option>)}</Select></Field>
       <Field label="SKU 编码" full><Input autoFocus value={item.skuCode} onChange={event => setItem(current => ({ ...current, skuCode: event.target.value }))} placeholder="例如：SKU-A01" /></Field>
       <Field label="售卖规格" full><Input value={item.specification} onChange={event => setItem(current => ({ ...current, specification: event.target.value }))} placeholder="例如：2 件装 / 红色 XL" /></Field>
       <Field label="总成本" full><Input type="number" min="0" step="0.01" value={item.totalCost} onChange={event => setItem(current => ({ ...current, totalCost: event.target.value === '' ? 0 : Number(event.target.value) }))} /></Field>

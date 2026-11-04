@@ -7,7 +7,8 @@ import { OperationForm } from '../components/OperationForm'
 import { createId, useWorkbench } from '../store/workbench'
 import type { ActivityType, Platform, Sku } from '../types/models'
 import { calculatedBreakEvenRoi, grossMargin, grossProfit, money, percent, totalCost } from '../utils/calculations'
-import { getSkuContext, isActiveProductLink } from '../utils/selectors'
+import { getSkuContext } from '../utils/selectors'
+import { isOperationalProductLink, productOptions } from '../utils/productArchive'
 import { appendSkuHistory } from '../utils/skuHistory'
 import { createSkuChangeOperations } from '../utils/skuOperations'
 
@@ -24,14 +25,14 @@ export function Products() {
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<Sku | null>(null)
   const [operationSkuId, setOperationSkuId] = useState<string | null>(null)
-  const activeLinks = data.productLinks.filter(link => isActiveProductLink(data, link.id))
+  const activeLinks = data.productLinks.filter(link => isOperationalProductLink(data, link.id))
   const rows = useMemo(() => data.skus.filter(sku => {
     const ctx = getSkuContext(data, sku.id)
     const haystack = `${ctx.product?.name} ${ctx.link?.linkId} ${sku.name} ${sku.skuId}`.toLowerCase()
-    return isActiveProductLink(data, sku.productLinkId) && (!clientId || ctx.client?.id === clientId) && (!storeId || ctx.store?.id === storeId) && (!platform || ctx.store?.platform === platform) && (!productId || ctx.product?.id === productId) && (!query || haystack.includes(query.toLowerCase()))
+    return isOperationalProductLink(data, sku.productLinkId) && (!clientId || ctx.client?.id === clientId) && (!storeId || ctx.store?.id === storeId) && (!platform || ctx.store?.platform === platform) && (!productId || ctx.product?.id === productId) && (!query || haystack.includes(query.toLowerCase()))
   }), [data, clientId, storeId, platform, productId, query])
   const filteredStores = data.stores.filter(s => s.storeStatus !== '暂停' && (!clientId || s.clientId === clientId))
-  const filteredProducts = data.products.filter(product => !clientId || product.clientId === clientId)
+  const filteredProducts = productOptions(data).filter(product => !clientId || product.clientId === clientId)
   const clear = () => { setClientId(''); setStoreId(''); setPlatform(''); setProductId(''); setQuery('') }
 
   return <div className="page page-wide">
@@ -73,7 +74,7 @@ function SkuDrawer({ sku: initial, onClose, onSave, onAdjust }: { sku: Sku; onCl
   return <Drawer title={isNew ? '新增 SKU' : sku.name} onClose={onClose}>
     <div className="drawer-content">
       <section className="form-section"><h3>基础信息</h3><div className="form-grid">
-        <Field label="商品链接" full><Select value={sku.productLinkId} onChange={e => set('productLinkId', e.target.value)}><option value="">请选择</option>{data.productLinks.filter(x => isActiveProductLink(data, x.id) || x.id === sku.productLinkId).map(x => <option key={x.id} value={x.id}>{data.products.find(p => p.id === x.productId)?.name} · {x.linkId}</option>)}</Select></Field>
+        <Field label="商品链接" full><Select value={sku.productLinkId} onChange={e => set('productLinkId', e.target.value)}><option value="">请选择</option>{data.productLinks.filter(x => isOperationalProductLink(data, x.id) || x.id === sku.productLinkId).map(x => <option key={x.id} value={x.id}>{data.products.find(p => p.id === x.productId)?.name} · {x.linkId}</option>)}</Select></Field>
         <Field label="SKU 名称"><Input value={sku.name} onChange={e => set('name', e.target.value)} /></Field><Field label="SKU ID"><Input value={sku.skuId} onChange={e => set('skuId', e.target.value)} /></Field>
         <Field label="规格" full><Input value={sku.specification} onChange={e => set('specification', e.target.value)} /></Field>
       </div></section>
