@@ -113,14 +113,53 @@ export function diffWorkbenchRows(before: StoredRow[], after: StoredRow[]): RowC
   return changes
 }
 
+// PostgreSQL JSONB text adds a space after structural commas/colons and expands
+// exponential numbers. Account for that before using the existing 512 KiB RPC
+// ceiling; wire JSON bytes alone are not the server's size measurement.
+function jsonbTextBytes(json: string, wireBytes: number) {
+  let size = wireBytes, quoted = false, escaped = false
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i]
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+    } else if (char === '"') quoted = true
+    else if (char === ',' || char === ':') size++
+    else if (char === '-' || char >= '0' && char <= '9') {
+      const start = i
+      while (i + 1 < json.length && /[0-9eE+.\-]/.test(json[i + 1])) i++
+      const number = json.slice(start, i + 1), parts = number.toLowerCase().split('e')
+      if (parts.length === 2) {
+        const sign = parts[0].startsWith('-') ? 1 : 0, mantissa = parts[0].slice(sign)
+        const digits = mantissa.replace('.', '').length
+        const point = (mantissa.includes('.') ? mantissa.indexOf('.') : mantissa.length) + Number(parts[1])
+        const expanded = sign + (point <= 0 ? 2 - point + digits : point >= digits ? point : digits + 1)
+        size += Math.max(0, expanded - number.length)
+      }
+    }
+  }
+  return size
+}
+
 export function chunkRowChanges(changes: RowChange[], maxRows = 200, maxBytes = 256 * 1024) {
-  const chunks: RowChange[][] = [], bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength
-  let chunk: RowChange[] = []
+  const chunks: RowChange[][] = [], encoder = new TextEncoder(), serverBytes = 512 * 1024
+  // Preserve explicit smaller caller limits. Ordinary chunks keep the 256 KiB
+  // target; a larger record travels alone only within the unchanged RPC limit.
+  const singletonBytes = maxBytes === 256 * 1024 ? serverBytes : Math.min(maxBytes, serverBytes)
+  let chunk: RowChange[] = [], wireSize = 2, stageSize = 2
+  const flush = () => { if (chunk.length) chunks.push(chunk); chunk = []; wireSize = 2; stageSize = 2 }
   for (const change of changes) {
-    if (bytes([change]) > maxBytes) throw new Error('A stored record exceeds the batch limit; local backup retained')
-    if (chunk.length && (chunk.length >= maxRows || bytes([...chunk, change]) > maxBytes)) { chunks.push(chunk); chunk = [] }
+    const json = JSON.stringify(change), wire = encoder.encode(json).byteLength, stage = jsonbTextBytes(json, wire)
+    if (wire + 2 > singletonBytes || stage + 2 > serverBytes) {
+      throw new Error(`A stored record exceeds the batch limit (${change.collection}, ${stage + 2} JSONB bytes); local backup retained`)
+    }
+    if (wire + 2 > maxBytes) { flush(); chunks.push([change]); continue }
+    if (chunk.length && (chunk.length >= maxRows || wireSize + 1 + wire > maxBytes || stageSize + 2 + stage > serverBytes)) flush()
+    wireSize += wire + (chunk.length ? 1 : 0)
+    stageSize += stage + (chunk.length ? 2 : 0)
     chunk.push(change)
   }
-  if (chunk.length) chunks.push(chunk)
+  flush()
   return chunks
 }

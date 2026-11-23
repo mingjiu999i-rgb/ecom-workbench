@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx-js-style'
 import type { CollectionRecord, ProfitRecord, Store, WorkbenchData } from '../types/models'
 import { normalizeCollectionRefunds } from './collectionRefunds'
 import { appendSpecSales } from './specSalesWorkbook'
+import { appendProfitBaselineDisplay } from './profitBaselineWorkbook'
 
 type CellValue = string | number | Date | null
 type CollectionTotal = Omit<CollectionRecord, 'id' | 'storeId' | 'date' | 'updatedAt'> & { date: string }
@@ -221,13 +222,95 @@ function buildSummarySheet(data: WorkbenchData, clientId: string, stores: Store[
   return sheet
 }
 
-function buildProductPreviewSheet(data: WorkbenchData, profits: ProfitRecord[]) {
+type ProductPreviewAmounts = { orderSales: number; cost: number; quantity: number; deduction: number }
+
+function productPreviewAmounts(data: WorkbenchData, collections: CollectionRecord[], profits: ProfitRecord[]) {
+  const result = new Map<string, ProductPreviewAmounts>()
+  const collectionByDay = new Map(collections.map(row => [`${row.storeId}|${row.date}`, row]))
+  const close = (left: number, right: number) => Math.abs(round(left) - round(right)) <= 0.02
+  ;(data.orderAccountingLedgers || []).forEach(ledger => {
+    const initialized = new Set(ledger.initializedDates)
+    initialized.forEach(date => {
+      const collection = collectionByDay.get(`${ledger.storeId}|${date}`)
+      if (!collection) return
+      const orders = ledger.orders.filter(order => order.date === date)
+      const orderById = new Map(orders.map(order => [order.id, order]))
+      const ids = new Set(orderById.keys())
+      const dayRefunds = ledger.refunds.filter(refund => ids.has(refund.orderId) && refund.success)
+      const unshipped = new Set(dayRefunds.filter(refund => refund.stage === '未发货').map(refund => refund.orderId))
+      const shipped = new Set(dayRefunds.filter(refund => refund.stage === '已发货' && !unshipped.has(refund.orderId)).map(refund => refund.orderId))
+      const validOrders = orders.filter(order => !order.cancelled && !unshipped.has(order.id))
+      const byProduct = new Map<string, ProductPreviewAmounts>()
+      const saleRefundByProduct = new Map<string, number>()
+      const amountFor = (productId: string) => {
+        const current = byProduct.get(productId) || { orderSales: 0, cost: 0, quantity: 0, deduction: 0 }
+        byProduct.set(productId, current)
+        return current
+      }
+      let missingCost = false
+      validOrders.forEach(order => {
+        const amounts = amountFor(order.productId)
+        amounts.orderSales += order.receipt
+        if (!order.supplement) {
+          if (order.unitCost == null) missingCost = true
+          else { amounts.cost += order.unitCost * order.quantity; amounts.quantity += order.quantity }
+        }
+      })
+      let shippedRefund = 0; let couponRefund = 0; let basicServiceFee = 0; let afterSaleCompensation = 0; let smallPayment = 0
+      ledger.funds.filter(fund => ids.has(fund.orderId)).forEach(fund => {
+        const order = orderById.get(fund.orderId)!
+        let deduction = 0
+        if (shipped.has(fund.orderId) && fund.category === 'refund') {
+          deduction = -fund.income - fund.expense
+          if (fund.businessCode === '0020005') couponRefund += deduction
+          else shippedRefund += deduction
+          saleRefundByProduct.set(order.productId, (saleRefundByProduct.get(order.productId) || 0) + deduction)
+        } else if (fund.businessCode === '0030002' && fund.expense < 0) {
+          deduction = Math.abs(fund.expense); basicServiceFee += deduction
+        } else if (fund.businessCode === '0040002' && fund.expense < 0) {
+          deduction = Math.abs(fund.expense); afterSaleCompensation += deduction
+        } else if (fund.businessCode === '0040001' && fund.expense < 0) {
+          deduction = Math.abs(fund.expense); smallPayment += deduction
+        }
+        if (deduction) amountFor(order.productId).deduction += deduction
+      })
+      const dayProfits = profits.filter(row => row.storeId === ledger.storeId && row.date === date)
+      const productIds = new Set(dayProfits.map(row => row.productId))
+      const allAssigned = [...byProduct.keys()].every(productId => productIds.has(productId))
+      const completeProfits = dayProfits.every(row => [row.amount, row.cost, row.promotion, row.operationRate, row.quantity].every(Number.isFinite))
+      const productsMatch = [...productIds].every(productId => {
+        const productRows = dayProfits.filter(row => row.productId === productId)
+        const amounts = byProduct.get(productId)
+        return close(sum(productRows, row => row.amount), (amounts?.orderSales || 0) - (saleRefundByProduct.get(productId) || 0))
+          && close(sum(productRows, row => row.cost), amounts?.cost || 0)
+          && close(sum(productRows, row => row.quantity), amounts?.quantity || 0)
+      })
+      if (!allAssigned || missingCost || !completeProfits || !productsMatch || !close(validOrders.reduce((total, order) => total + order.receipt, 0), collection.originalSales)
+        || !close(sum(dayProfits, row => row.amount), collection.effectiveSales)
+        || !close(shippedRefund, collection.shippedRefund) || !close(couponRefund, collection.couponRefund)
+        || !close(basicServiceFee, collection.basicServiceFee) || !close(afterSaleCompensation, collection.afterSaleCompensation)
+        || !close(smallPayment, collection.smallPayment)) return
+      byProduct.forEach((amounts, productId) => result.set(`${ledger.storeId}|${date}|${productId}`, {
+        orderSales: round(amounts.orderSales), cost: round(amounts.cost), quantity: round(amounts.quantity), deduction: round(amounts.deduction),
+      }))
+      dayProfits.forEach(row => {
+        const key = `${ledger.storeId}|${date}|${row.productId}`
+        if (!result.has(key)) result.set(key, { orderSales: 0, cost: 0, quantity: 0, deduction: 0 })
+      })
+    })
+  })
+  return result
+}
+
+function buildProductPreviewSheet(data: WorkbenchData, collections: CollectionRecord[], profits: ProfitRecord[]) {
   const sheet = XLSX.utils.aoa_to_sheet([])
   setCell(sheet, 0, 0, '产品利润汇总', titleStyle(12))
-  setCell(sheet, 1, 0, '相同标准产品在不同店铺合并展示；有效销售额已反映本期订单退款。补收差价计入金额，不计销量和成本。', noteStyle)
+  setCell(sheet, 1, 0, '相同标准产品跨店合并；新口径：商品毛利润=订单成交额−货品成本，运营费用预估=订单成交额×已保存运营费率，初始盈亏=商品毛利润−推广花费−运营费用预估，最新盈亏=初始盈亏−退款扣款。退款扣款含已发货退款、优惠券退款、基础服务费、售后补偿和小额打款。无完整订单索引的历史数据只显示有效销售额（历史），与新口径月汇总分开。', noteStyle)
   let row = 3
 
   const aggregated = aggregateProfitRows(profits)
+  const perStore = [...new Set(profits.map(item => item.storeId))].flatMap(storeId => aggregateProfitRows(profits.filter(item => item.storeId === storeId)))
+  const previewAmounts = productPreviewAmounts(data, collections, perStore)
   const dates = [...new Set(aggregated.map(item => item.date))].sort()
   const months = [...new Set(dates.map(monthKey))]
   const columns: Array<{ type: 'date' | 'month'; key: string }> = []
@@ -241,18 +324,22 @@ function buildProductPreviewSheet(data: WorkbenchData, profits: ProfitRecord[]) 
     return nameA.localeCompare(nameB, 'zh-CN')
   })
   const metrics = [
-    { label: '有效销售额', key: 'amount' as const, format: moneyFormat },
-    { label: '货品成本', key: 'cost' as const, format: moneyFormat },
-    { label: '商品毛利润', key: 'grossProfit' as const, format: moneyFormat },
-    { label: '推广花费', key: 'promotion' as const, format: moneyFormat },
-    { label: '运营费用预估', key: 'operationFee' as const, format: moneyFormat },
-    { label: '预估利润', key: 'estimatedProfit' as const, format: moneyFormat },
-    { label: '当天销量', key: 'quantity' as const, format: '#,##0.##' },
-    { label: '毛利率', key: 'margin' as const, format: percentFormat },
-  ]
+    { label: '订单成交额', key: 'orderSales', format: moneyFormat },
+    { label: '货品成本', key: 'cost', format: moneyFormat },
+    { label: '商品毛利润', key: 'grossProfit', format: moneyFormat },
+    { label: '推广花费', key: 'promotion', format: moneyFormat },
+    { label: '运营费用预估', key: 'operationFee', format: moneyFormat },
+    { label: '当天销量', key: 'quantity', format: '#,##0.##' },
+    { label: '初始盈亏', key: 'initialProfit', format: moneyFormat },
+    { label: '初始毛利率', key: 'initialMargin', format: percentFormat },
+    { label: '退款扣款', key: 'deduction', format: moneyFormat },
+    { label: '有效销售额（历史）', key: 'historicalSales', format: moneyFormat },
+    { label: '最新盈亏', key: 'latestProfit', format: moneyFormat },
+    { label: '最新毛利率', key: 'latestMargin', format: percentFormat },
+  ] as const
   productIds.forEach((productId, productIndex) => {
     const start = row
-    const productRows = aggregated.filter(item => item.productId === productId)
+    const productRows = perStore.filter(item => item.productId === productId)
     setCell(sheet, start, 0, data.products.find(item => item.id === productId)?.name || '已删除产品', { ...headerStyle, font: { name: 'Microsoft YaHei', sz: 12, bold: true, color: { rgb: '000000' } }, fill: { patternType: 'solid', fgColor: { rgb: colors.yellow } } })
     setCell(sheet, start, 1, '日期', { ...headerStyle, font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: '000000' } }, fill: { patternType: 'solid', fgColor: { rgb: colors.yellow } } })
     columns.forEach((column, index) => setCell(sheet, start, index + 2, column.type === 'date' ? dateLabel(column.key) : monthLabel(column.key), { ...headerStyle, fill: { patternType: 'solid', fgColor: { rgb: column.type === 'month' ? colors.teal : colors.navy } }, font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: column.type === 'month' ? colors.text : colors.white } } }))
@@ -263,10 +350,32 @@ function buildProductPreviewSheet(data: WorkbenchData, profits: ProfitRecord[]) 
         const selected = productRows.filter(item => column.type === 'date' ? item.date === column.key : monthKey(item.date) === column.key)
         let value: number | string = ''
         if (selected.length) {
-          if (metric.key === 'margin') {
-            const amount = sum(selected, item => item.amount)
-            value = amount ? sum(selected, item => item.estimatedProfit) / amount : 0
-          } else value = sum(selected, item => Number(item[metric.key]))
+          const indexed = selected.flatMap(item => {
+            const amounts = previewAmounts.get(`${item.storeId}|${item.date}|${item.productId}`)
+            return amounts ? [{ item, amounts }] : []
+          })
+          const historical = selected.filter(item => !previewAmounts.has(`${item.storeId}|${item.date}|${item.productId}`))
+          const orderSales = sum(indexed, entry => entry.amounts.orderSales)
+          const cost = sum(indexed, entry => entry.amounts.cost)
+          const grossProfit = round(orderSales - cost)
+          const promotion = sum(indexed, entry => entry.item.promotion)
+          const operationFee = sum(indexed, entry => round(entry.amounts.orderSales * entry.item.operationRate))
+          const initialProfit = round(grossProfit - promotion - operationFee)
+          const deduction = sum(indexed, entry => entry.amounts.deduction)
+          switch (metric.key) {
+            case 'orderSales': value = indexed.length ? orderSales : ''; break
+            case 'historicalSales': value = historical.length ? sum(historical, item => item.amount) : ''; break
+            case 'cost': value = indexed.length ? cost : ''; break
+            case 'grossProfit': value = indexed.length ? grossProfit : ''; break
+            case 'promotion': value = indexed.length ? promotion : ''; break
+            case 'operationFee': value = indexed.length ? operationFee : ''; break
+            case 'quantity': value = indexed.length ? sum(indexed, entry => entry.amounts.quantity) : ''; break
+            case 'initialProfit': value = indexed.length ? initialProfit : ''; break
+            case 'initialMargin': value = indexed.length && orderSales ? initialProfit / orderSales : ''; break
+            case 'deduction': value = indexed.length ? deduction : ''; break
+            case 'latestProfit': value = indexed.length ? round(initialProfit - deduction) : ''; break
+            case 'latestMargin': value = indexed.length && orderSales ? round(initialProfit - deduction) / orderSales : ''; break
+          }
         }
         setCell(sheet, metricRow, index + 2, value, { ...bodyStyle, numFmt: metric.format, fill: column.type === 'month' ? { patternType: 'solid', fgColor: { rgb: colors.teal } } : undefined, font: { name: 'Microsoft YaHei', sz: 10, bold: column.type === 'month', color: { rgb: colors.text } }, alignment: { horizontal: 'center', vertical: 'center' } })
       })
@@ -287,7 +396,7 @@ function buildProductPreviewSheet(data: WorkbenchData, profits: ProfitRecord[]) 
     ...(sheet['!merges'] || []),
   ]
   sheet['!cols'] = [{ wch: 19 }, { wch: 18 }, ...Array.from({ length: lastColumn - 1 }, (_, index) => ({ wch: columns[index]?.type === 'month' ? 15 : 11 }))]
-  sheet['!rows'] = Array.from({ length: row + 1 }, (_, index) => ({ hpt: index === 0 ? 25 : index === 1 ? 38 : 23 }))
+  sheet['!rows'] = Array.from({ length: row + 1 }, (_, index) => ({ hpt: index === 0 ? 25 : index === 1 ? 72 : 23 }))
   sheet['!freeze'] = { xSplit: 2, ySplit: 4, topLeftCell: 'C5', activePane: 'bottomRight', state: 'frozen' }
   sheet['!sheetViews'] = [{ showGridLines: false }]
   sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow, c: lastColumn } })
@@ -347,9 +456,10 @@ export function createSettlementWorkbook(data: WorkbenchData, options: Settlemen
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, buildSummarySheet(data, options.clientId, stores, collections, profits, startDate, endDate), '总览')
   appendSpecSales(workbook.Sheets['总览'], data, options)
-  XLSX.utils.book_append_sheet(workbook, buildProductPreviewSheet(data, profits), '产品预览')
+  XLSX.utils.book_append_sheet(workbook, buildProductPreviewSheet(data, collections, profits), '产品预览')
   const used = new Set(workbook.SheetNames)
   stores.forEach(store => XLSX.utils.book_append_sheet(workbook, buildDetailSheet(store, collections.filter(row => row.storeId === store.id), startDate, endDate), safeSheetName(`${store.name}回款`, used)))
+  appendProfitBaselineDisplay(workbook, data, stores, collections, profits)
   workbook.Workbook = workbook.Workbook || {}
   ;(workbook.Workbook as unknown as { CalcPr: { calcMode: string; fullCalcOnLoad: boolean; forceFullCalc: boolean } }).CalcPr = { calcMode: 'auto', fullCalcOnLoad: true, forceFullCalc: true }
   return workbook

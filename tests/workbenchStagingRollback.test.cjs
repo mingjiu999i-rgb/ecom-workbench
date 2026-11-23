@@ -1,0 +1,16 @@
+const { test } = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
+const h = require('./rowHarness.cjs')
+test('guarded rollback refuses outstanding compact stages and restores only function after completed requests', async t => {
+  const db = await h.database(); t.after(() => db.close()); await h.seed(db, h.fixture())
+  const a = h.transport(db), doc = h.fixture(), next = h.json(doc); next.todos.push({ id: 'new' })
+  const changes = h.diffWorkbenchRows(h.encodeWorkbenchRows(doc), h.encodeWorkbenchRows(next)), id = crypto.randomUUID()
+  await a.begin({ id, revision: '0', count: changes.length, fingerprint: 'a'.repeat(64) }); await a.stage(id, 0, changes)
+  const rollback = fs.readFileSync(path.join(h.root, 'supabase/proposals/rollback_workbench_staging_identity.sql'), 'utf8')
+  await assert.rejects(() => db.exec(rollback), e => e.code === '55000'); await db.exec('rollback')
+  assert((await db.query("select prosrc from pg_proc where oid='public.stage_workbench_rows(uuid,integer,jsonb)'::regprocedure")).rows[0].prosrc.includes('compact_item'))
+  assert.equal(await a.commit(id), '1')
+  await db.exec(rollback)
+  assert.equal((await a.head()).revision, '1'); assert.deepEqual(h.json(await h.createRowWorkbenchStore(a).load()), next)
+  const privileges = (await db.query("select has_function_privilege('authenticated','public.stage_workbench_rows(uuid,integer,jsonb)','execute') as auth,has_function_privilege('anon','public.stage_workbench_rows(uuid,integer,jsonb)','execute') as anon")).rows[0]
+  assert.deepEqual(privileges, { auth: true, anon: false })
+})

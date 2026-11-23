@@ -31,7 +31,7 @@ export function appendSpecSales(sheet: XLSX.WorkSheet, data: WorkbenchData, filt
   put(0, '规格销量汇总', { ...base, font: { ...base.font, bold: true, sz: 14 } })
   merges.push({ s: { r: row, c: 0 }, e: { r: row, c: lastColumn } }); heights[row++] = { hpt: 28 }
   full(`昨日 ${reportFilter.startDate}，相同规格编码跨店合计。`)
-  if (!report.complete) full('部分历史订单缺少可核对的编码、日期、件数或状态，当前销量不完整；待补数据不按 0 处理。', true)
+  if (!report.complete) full('当前销量不完整。“待补数据”涉及的订单及补报方法见表下方「销量待补明细」。', true)
   const spans = [[0, 0], [1, 2], [3, 3]]
   const cells = (values: Array<string | number>, header = false) => {
     values.forEach((value, index) => {
@@ -45,6 +45,21 @@ export function appendSpecSales(sheet: XLSX.WorkSheet, data: WorkbenchData, filt
   cells(['规格编码', '售卖规格', '总数量（件）'], true)
   report.rows.forEach(item => cells([item.skuCode, item.specification, item.quantity ?? '待补数据']))
   if (!report.rows.length) full(report.complete ? '所选范围暂无可统计的规格销量。' : '暂无可统计的规格编码，需补导原订单报表。', !report.complete)
+  if (!report.complete) {
+    row++
+    full('销量待补明细', true)
+    full('按店铺和订单号核对平台原订单报表。进入经营结算，选择对应店铺，补导含订单号、支付时间、订单状态、商家编码-规格维度和商品数量(件)的报表，待保存后重新导出。')
+    heights[row - 1] = { hpt: 48 }
+    const storeNames = new Map(data.stores.map(store => [store.id, store.name]))
+    const details = [...report.diagnostics].sort((a, b) => Number(!!b.blocksQuantity) - Number(!!a.blocksQuantity)
+      || (a.skuCode || '').localeCompare(b.skuCode || '', 'zh-CN'))
+    const limit = 100
+    for (const item of details.slice(0, limit)) {
+      const order = item.orderId ? ` · 订单 ${item.orderId}` : ''
+      full(`${item.skuCode || '规格编码未确定'} · ${storeNames.get(item.storeId) || '店铺未知'} · ${item.date || '支付日期未知'}${order}\n${item.reason}`)
+    }
+    if (details.length > limit) full(`以上显示 ${limit} 条，共 ${details.length} 条问题。其余请按对应店铺核对所选日期的原订单报表，以及支付时间缺失的订单。`, true)
+  }
   for (let addedRow = oldRange.e.r + 1; addedRow < row; addedRow++) {
     for (let column = 0; column <= lastColumn; column++) {
       const address = XLSX.utils.encode_cell({ r: addedRow, c: column })

@@ -1,24 +1,24 @@
 import { useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { buildPerformance } from '../utils/performanceSummary'
-import { performanceTrendColumn } from '../utils/performanceTrendColumn'
 import './performance-trend.css'
 
-type Props = Pick<ReturnType<typeof buildPerformance>, 'trend' | 'monthly'> & { comparison: string; comparisonPeriod: string; onSelect: (start: string, end: string) => void }
+type Props = Pick<ReturnType<typeof buildPerformance>, 'trend' | 'monthly'> & { comparison: string; comparisonPeriod: string; onSelect: (start: string, end: string) => void; initialStatus?: 'ready' | 'loading' | 'error'; initialError?: string; onRetryInitial?: () => void }
 type Series = 'both' | 'refund' | 'profit'
 const money = (value: number | null) => value == null ? '暂无数据' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-export function PerformanceTrend({ trend, monthly, comparison, comparisonPeriod, onSelect }: Props) {
+export function PerformanceTrend({ trend, monthly, comparison, comparisonPeriod, onSelect, initialStatus = 'ready', initialError, onRetryInitial }: Props) {
+  const initialMoney = (value: number | null) => value != null ? money(value) : initialStatus === 'ready' ? '未记录' : initialStatus === 'loading' ? '读取中' : '读取失败'
   const [series, setSeries] = useState<Series>('both')
   const [activeDate, setActiveDate] = useState<string | null>(null)
   const [point, setPoint] = useState({ left: 8, top: 8 })
   const chart = useRef<HTMLDivElement>(null)
-  const columns = useMemo(() => trend.map(row => ({ ...row, ...performanceTrendColumn(row.profit, row.amount) })), [trend])
+  const columns = useMemo(() => trend.map(row => ({ ...row, refund: row.amount })), [trend])
   const active = columns.find(row => row.date === activeDate)
   const showRefund = series !== 'profit', showProfit = series !== 'refund'
   const values = columns.flatMap(row => [...(showRefund ? [row.refund ?? 0] : []), ...(showProfit ? [row.profit ?? 0] : [])])
   const highest = Math.max(1, ...values), lowest = Math.min(0, ...values), plotHeight = 200
   const y = (value: number) => (highest - value) / (highest - lowest) * plotHeight
-  const description = (row: typeof columns[number]) => `${row.date}，预估盈亏 ${money(row.profit)}，退款 ${money(row.refund)}，盈亏－退款 ${money(row.balance)}`
+  const description = (row: typeof columns[number]) => `${row.date}，初始预估盈亏 ${initialMoney(row.profit)}，退款 ${money(row.refund)}，最新盈亏 ${money(row.latestProfit)}${initialStatus === 'ready' && row.profitNote ? `，${row.profitNote}` : ''}`
   const isolate = (name: Series) => { setSeries(current => current === name ? 'both' : name); setActiveDate(null) }
   const locate = (date: string, clientX: number, clientY: number) => {
     const rect = chart.current?.getBoundingClientRect()
@@ -33,14 +33,15 @@ export function PerformanceTrend({ trend, monthly, comparison, comparisonPeriod,
     : <i className={`performance-trend-bar series-${name}`} style={{ top: amount < 0 ? y(0) : y(amount), height: Math.max(2, Math.abs(y(amount) - y(0))) }} />
 
   return <div className="refund-trend performance-trend">
-    <div className="refund-trend-heading"><strong>{monthly ? '每月盈亏与退款' : '每日盈亏与退款'}</strong><span title={comparisonPeriod}>退款：{comparison}</span></div>
+    <div className="refund-trend-heading"><strong>{monthly ? '每月初始预估盈亏与退款' : '每日初始预估盈亏与退款'}</strong><span title={comparisonPeriod}>退款：{comparison}</span></div>
     <div className="performance-trend-legend" role="group" aria-label="图例筛选">
       <button type="button" aria-pressed={showRefund} title={series === 'refund' ? '再次点击恢复两项' : '点击单独查看退款'} onClick={() => isolate('refund')}><i className="legend-refund" />退款</button>
-      <button type="button" aria-pressed={showProfit} title={series === 'profit' ? '再次点击恢复两项' : '点击单独查看预估盈亏'} onClick={() => isolate('profit')}><i className="legend-profit" />预估盈亏</button>
+      <button type="button" aria-pressed={showProfit} title={series === 'profit' ? '再次点击恢复两项' : '点击单独查看初始预估盈亏'} onClick={() => isolate('profit')}><i className="legend-profit" />初始预估盈亏</button>
     </div>
+    <p className="performance-note performance-trend-note">新记录的初始预估盈亏不扣已发货退款，记录后固定；悬浮可看退款回填后的最新盈亏。历史初始值保留。{initialStatus === 'ready' ? columns.some(row => row.profitNote) && '未记录的历史初始值显示“—”，不以最新值或零代替。' : initialStatus === 'loading' ? '正在读取初始记录…' : initialError || '初始记录读取失败。'}{initialStatus === 'error' && <button type="button" className="text-button" onClick={onRetryInitial}>重新读取初始记录</button>}</p>
     <div className="performance-trend-chart" ref={chart} onMouseLeave={() => { if (!chart.current?.contains(document.activeElement)) setActiveDate(null) }}>
       <div className="performance-trend-axis" aria-hidden="true">{y(0) >= 22 && <span>{money(highest)}</span>}<span style={{ top: y(0) }}>0</span>{lowest < 0 && plotHeight - y(0) >= 22 && <span className="axis-bottom">{money(lowest)}</span>}</div>
-      <div className={`performance-trend-bars mode-${series}`} role="group" aria-label="每日盈亏与退款趋势">
+      <div className={`performance-trend-bars mode-${series}`} role="group" aria-label={`${monthly ? '每月' : '每日'}初始预估盈亏与退款趋势`}>
         {columns.map(row => <button key={row.date} type="button" aria-label={description(row)} aria-describedby={row.date === activeDate ? 'performance-trend-tooltip' : undefined} onMouseEnter={event => hover(event, row.date)} onMouseMove={event => hover(event, row.date)} onFocus={event => { const rect = event.currentTarget.getBoundingClientRect(); locate(row.date, rect.left + rect.width / 2, rect.top + 80) }} onBlur={() => setActiveDate(null)} onClick={() => onSelect(row.start, row.end)}>
           <span className="performance-trend-track" style={{ height: plotHeight }} aria-hidden="true">
             <span className="performance-trend-zero" style={{ top: y(0) }} />
@@ -50,9 +51,10 @@ export function PerformanceTrend({ trend, monthly, comparison, comparisonPeriod,
       </div>
       {active && <div className="performance-trend-tooltip" id="performance-trend-tooltip" role="tooltip" style={{ top: point.top, left: `min(${point.left}px, max(8px, calc(100% - 256px)))` }}>
         <strong>{active.date}</strong>
-        <div><span><i className="legend-profit" />预估盈亏</span><b>{money(active.profit)}</b></div>
+        <div><span><i className="legend-profit" />初始预估盈亏</span><b>{initialMoney(active.profit)}</b></div>
         <div><span><i className="legend-refund" />退款</span><b>{money(active.refund)}</b></div>
-        <div className="performance-trend-difference"><span>盈亏－退款</span><b>{money(active.balance)}</b></div>
+        <div className="performance-trend-difference"><span>最新盈亏</span><b>{money(active.latestProfit)}</b></div>
+        {((initialStatus === 'ready' && active.profitNote) || active.latestProfitNote) && <p className="performance-trend-tooltip-note">{[initialStatus === 'ready' && active.profitNote, active.latestProfitNote].filter(Boolean).join('；')}</p>}
       </div>}
     </div>
   </div>

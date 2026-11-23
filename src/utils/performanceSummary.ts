@@ -1,4 +1,5 @@
 import type { CollectionRecord, WorkbenchData } from '../types/models'
+import { initialStoreProductProfit } from './profitBaselines'
 
 export const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
 const value = (number: number | null | undefined) => Number.isFinite(number) ? Number(number) : 0
@@ -86,9 +87,10 @@ export function buildPerformance(data: WorkbenchData, start: string, end: string
   const clients = data.clients.filter(client => !storeId || selected.some(store => store.clientId === client.id)).map(client => ({ ...client, ...summarizePerformance(data, start, end, new Set(selected.filter(store => store.clientId === client.id).map(store => store.id))) }))
   const collections = data.collectionRecords.filter(row => ids.has(row.storeId) && row.date >= start && row.date <= end)
   const products = data.profitRecords.filter(row => ids.has(row.storeId) && row.date >= start && row.date <= end)
+  const baselines = (data.profitBaselines || []).filter(row => ids.has(row.storeId) && row.date >= start && row.date <= end)
   const days = Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1
   const monthly = days > 62
-  const keys = monthly ? [...new Set([...collections, ...products].map(row => row.date.slice(0, 7)))].sort() : Array.from({ length: Math.max(0, days) }, (_, i) => shiftDate(start, i))
+  const keys = monthly ? [...new Set([...collections, ...products, ...baselines].map(row => row.date.slice(0, 7)))].sort() : Array.from({ length: Math.max(0, days) }, (_, i) => shiftDate(start, i))
   const trend = keys.map(date => {
     const rows = collections.filter(row => monthly ? row.date.startsWith(date) : row.date === date)
     const profitRows = products.filter(row => monthly ? row.date.startsWith(date) : row.date === date)
@@ -98,14 +100,20 @@ export function buildPerformance(data: WorkbenchData, start: string, end: string
     const missingAmounts = profitRows.some(row => ![row.estimatedProfit, row.operationFee, row.amount, row.cost, row.promotion].every(Number.isFinite))
     const profitIssues = summary.issues.filter(issue => issue.kind === 'cost' || issue.kind === 'profit')
     const missingPromotion = rows.some(row => 'promotionFeeKnown' in row && row.promotionFeeKnown === false)
-    const profitNote = !profitRows.length ? '暂无已保存产品利润，无法确认扣运营费用后的盈亏'
+    const latestProfitNote = !profitRows.length ? '暂无已保存产品利润，无法确认扣运营费用后的盈亏'
       : missingAmounts ? '缺少已保存的预估利润或费用金额'
         : missingPromotion ? '缺少原成交日推广费，盈亏待补全'
           : profitIssues.length ? [...new Set(profitIssues.map(issue => issue.message))].join('；') : null
     // Saved product estimatedProfit already includes operation fees. Read only; never deduct twice.
-    const profit = profitNote ? null : sum(profitRows, row => row.estimatedProfit)
+    const latestProfit = latestProfitNote ? null : sum(profitRows, row => row.estimatedProfit)
+    const initialRows = baselines.filter(row => monthly ? row.date.startsWith(date) : row.date === date)
+    const scopes = [...new Map([...rows, ...profitRows, ...initialRows].map(row => [JSON.stringify([row.storeId, row.date]), { storeId: row.storeId, date: row.date }])).values()]
+    // Chart-only read: use the stored first-import product profit, including its
+    // original operation fees. Never fall back to today's changing profit.
+    const profit = initialStoreProductProfit(data, scopes)
+    const profitNote = profit == null ? (scopes.length ? '所选日期包含未记录的初始预估盈亏，不以最新盈亏或零补算' : '暂无初始预估盈亏记录') : null
     return { date, start: bucketStart < start ? start : bucketStart, end: bucketEnd > end ? end : bucketEnd, amount: rows.length ? sum(rows, row => row.shippedRefund) : null,
-      profit, profitNote, profitPartial: profit != null && summary.partial }
+      profit, profitNote, profitPartial: false, latestProfit, latestProfitNote, latestProfitPartial: latestProfit != null && summary.partial }
   })
   // Very long custom ranges can precede year 0000; don't manufacture an invalid comparison.
   const previousEnd = shiftDate(start, -1), previousStart = shiftDate(start, -days)

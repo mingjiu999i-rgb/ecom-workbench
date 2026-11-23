@@ -9,6 +9,7 @@ import { SkuDrafts } from './pages/SkuDrafts'
 import { PddAnalyzer } from './pages/PddAnalyzer'
 import { LinkProfit } from './pages/LinkProfit'
 import { StoreBusinessReset } from './pages/StoreBusinessReset'
+import { RefundReview } from './pages/RefundReview'
 import { WorkbenchProvider } from './store/workbench'
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
     <Route path="pdd-analyzer" element={<Navigate to="/profit-preview" replace />} />
     <Route path="profit-preview" element={<PddAnalyzer />} />
     <Route path="link-profit" element={<LinkProfit />} />
+    <Route path="refund-review" element={<RefundReview />} />
     <Route path="store-business-reset" element={<StoreBusinessReset />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Route></Routes></WorkbenchProvider>

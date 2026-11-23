@@ -1,0 +1,21 @@
+.settlement-diagnostics { max-height: min(65vh, 640px); overflow-y: auto; font-size: 13px; }
+.settlement-diagnostics p { margin: 0 0 12px; line-height: 1.7; color: #536078; }
+.settlement-diagnostics .diagnostics-intro { color: #263247; }
+.settlement-diagnostics .diagnostics-scope, .settlement-diagnostics .diagnostics-caption { color: #74829a; font-size: 12px; }
+.diagnostics-store { margin: 18px 0; }
+.diagnostics-store h3 { margin: 0 0 10px; color: #263247; font-size: 14px; }
+.diagnostics-day { margin: 8px 0; border: 1px solid #e4e9f1; border-radius: 8px; background: #fff; }
+.diagnostics-day > summary { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 12px; cursor: pointer; background: #fafbfd; border-radius: 8px; }
+.diagnostics-day > summary::before { content: '›'; color: #74829a; }
+.diagnostics-day[open] > summary::before { content: '⌄'; }
+.diagnostics-day > summary > span { color: #9a5b10; }
+.diagnostics-day-body { padding: 14px 12px; }
+.settlement-diagnostics table { width: 100%; min-width: 510px; margin-bottom: 10px; font-size: 12px; }
+.settlement-diagnostics th, .settlement-diagnostics td { padding: 10px 9px; white-space: nowrap; }
+.settlement-diagnostics .diagnostics-different { background: #fff7e8; }
+.settlement-diagnostics .diagnostics-cause { padding: 10px 12px; border-radius: 6px; background: #fff7e8; color: #9a5b10; }
+.diagnostics-orders { margin: 12px 0; }
+.diagnostics-orders > summary { margin-bottom: 10px; cursor: pointer; color: #4f74d9; }
+.diagnostics-orders td:first-child { font-variant-numeric: tabular-nums; }
+.diagnostics-resolved { padding: 12px; background: #eaf8f5; border-radius: 6px; }
+.diagnostics-day > summary:focus-visible, .diagnostics-orders > summary:focus-visible { outline: 2px solid #6578ff; outline-offset: 2px; }

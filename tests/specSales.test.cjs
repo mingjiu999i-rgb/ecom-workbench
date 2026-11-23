@@ -280,7 +280,7 @@ test('one unknown quantity in any store keeps the cross-store code total unknown
   assert.equal(report(data).complete, false)
 })
 
-test('export omits store columns, raw names and detailed diagnostics; many issues produce only one compact note', () => {
+test('export keeps the summary compact and shows actionable details within A:D', () => {
   const data = imported([row({ '商品规格': '原始长规格名称' }), ...Array.from({ length: 40 }, (_, index) => row({ '订单号': `missing-${index}`, '商家编码-规格维度': '' }))])
   data.orderAccountingLedgers = [ledger({ orders: [{ id: 'unindexed', date: '2026-10-19', cancelled: false, quantity: 7 }] })]
   const sheet = createSettlementWorkbook(data, { clientId: 'c' }).Sheets['总览']
@@ -289,11 +289,39 @@ test('export omits store columns, raw names and detailed diagnostics; many issue
   const section = grid.slice(start)
   const values = section.flat()
   assert.deepEqual(section[3].filter(Boolean), ['规格编码', '售卖规格', '总数量（件）'])
-  for (const forbidden of ['店铺', 'A店', 'B店', '原始长规格名称']) assert(!values.includes(forbidden))
-  assert(!values.some(value => typeof value === 'string' && /缺少规格维度编码，需补导|历史订单缺少规格明细|A店：/.test(value)))
+  assert.deepEqual(section[4].filter(Boolean), ['000123', '大果5斤', 2])
+  assert(!values.some(value => typeof value === 'string' && value.includes('原始长规格名称')))
+  assert(values.includes('销量待补明细'))
+  assert(values.some(value => typeof value === 'string' && /A店 · 2026-10-19 · 订单 unindexed\n历史订单缺少规格明细/.test(value)))
+  assert(values.some(value => typeof value === 'string' && /订单 missing-0\n缺少规格维度编码/.test(value)))
   assert.equal(section.filter(r => r.some(value => typeof value === 'string' && value.includes('当前销量不完整'))).length, 1)
-  assert.equal(section.length, 5)
+  assert(section.every(row => row.slice(4).every(value => !value)))
   const reopened = XLSX.read(XLSX.write({ SheetNames: ['总览'], Sheets: { 总览: sheet } }, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true })
   const codeCell = Object.values(reopened.Sheets['总览']).find(cell => cell?.v === '000123')
   assert.equal(codeCell.t, 's'); assert.equal(codeCell.w, '000123'); assert.equal(codeCell.z, '@')
+})
+
+test('未成交退款 without payment dates does not cause yesterday’s spec sales to show unknown', () => {
+  const failed = row({ '订单号': 'failed', '订单成交时间': '', '订单状态': '未成交，退款成功' })
+  const data = imported([row(), failed])
+  const result = summarizeSpecSales(data, { clientId: 'c', startDate: '2026-10-19', endDate: '2026-10-19' })
+  assert.equal(result.rows[0].quantity, 2)
+  assert.equal(result.complete, true)
+  assert.deepEqual(result.diagnostics, [])
+  assert.deepEqual(report(imported([failed])).rows, [])
+})
+
+test('actual missing fields show store, code, order, and reason; corrected source import clears the warning', () => {
+  const id = '261019-012345678901234'
+  const data = imported([row({ '订单号': id, '订单成交时间': '', '商品数量(件)': '' })], 'b', imported())
+  const inspect = fixture => Object.values(createSettlementWorkbook(fixture, { clientId: 'c' }).Sheets['总览']).map(cell => cell?.v)
+  const before = inspect(data)
+  assert(before.includes('待补数据'))
+  assert(before.includes(`000123 · B店 · 支付日期未知 · 订单 ${id}\n缺少有效支付日期，无法确定统计范围`))
+  assert(before.includes(`000123 · B店 · 支付日期未知 · 订单 ${id}\n缺少有效整数件数`))
+  const repaired = imported([row({ '订单号': id, '商品数量(件)': '3' })], 'b', data)
+  const after = inspect(repaired)
+  assert(after.includes(5))
+  assert(!after.includes('待补数据'))
+  assert(!after.includes('销量待补明细'))
 })

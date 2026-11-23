@@ -5,7 +5,11 @@ export type SpecSalesFilter = { clientId?: string; startDate?: string; endDate?:
 export type SpecSalesRow = {
   key: string; skuCode: string; specification: string; quantity: number | null
 }
-export const specSalesBasis = '按订单支付日期统计件数；取消、未付款、未发货退款成功及补差价不计入，已发货退款保留销量。'
+export const specSalesBasis = '按订单支付日期统计件数；取消、未成交、未付款、未发货退款成功及补差价不计入，已发货退款保留销量。'
+
+type SpecSalesIssue = {
+  storeId: string; reason: string; skuCode?: string; date?: string; orderId?: string; blocksQuantity?: boolean
+}
 
 // Read-only analysis of the existing independent order index. Never infer SKU
 // codes or quantities from today's cost library or change settlement records.
@@ -35,36 +39,40 @@ export function summarizeSpecSales(data: WorkbenchData, filter: SpecSalesFilter 
   const indexed = new Set<string>()
   const groups = new Map<string, SpecSalesRow>()
   const issues = new Map<string, Map<string, number>>()
-  const issue = (storeId: string, reason: string) => {
+  const diagnostics: SpecSalesIssue[] = []
+  const issue = (storeId: string, reason: string, context: Omit<SpecSalesIssue, 'storeId' | 'reason'>) => {
     const reasons = issues.get(storeId) || new Map<string, number>()
     reasons.set(reason, (reasons.get(reason) || 0) + 1)
     issues.set(storeId, reasons)
+    diagnostics.push({ storeId, reason, ...context })
   }
   // The order index is normally unique; keep repeated persisted entries from
   // being counted twice without changing its storage/deduplication rules.
   const orders = new Map(getLinkSalesOrders(data).map(order => [orderKey(order.storeId, order.orderId), order]))
   for (const [id, order] of orders) {
     indexed.add(id)
-    if (!storeIds.has(order.storeId) || order.supplement || /取消|待付款|未付款|待支付/.test(order.status)) continue
+    if (!storeIds.has(order.storeId) || order.supplement || /取消|未成交|待付款|未付款|待支付/.test(order.status)) continue
     if (unshipped.has(id) || order.status.includes('未发货') && order.status.includes('退款成功')) continue
     const dateKnown = !!order.date && linkDate(order.date) === order.date
     if (dateKnown && !inRange(order.date!)) continue
+    const context = { skuCode: order.skuCode?.trim(), date: dateKnown ? order.date! : undefined, orderId: order.orderId }
     if (!/已发货|未发货|已收货|已完成|已签收|已成交|待发货|待收货|待评价|交易成功|退款成功/.test(order.status) || order.conflict) {
-      issue(order.storeId, '订单状态或商品关联待核对'); continue
+      issue(order.storeId, '订单状态或商品关联待核对', context); continue
     }
-    if (!order.skuCode?.trim()) {
-      issue(order.storeId, '缺少规格维度编码，需补导原订单报表'); continue
+    if (!context.skuCode) {
+      issue(order.storeId, '缺少规格维度编码，需补导原订单报表', context); continue
     }
-    const skuCode = order.skuCode.trim()
+    const skuCode = context.skuCode
     // Reporting groups by exact code across the selected client's stores.
     // Order deduplication and refund lookup above remain store-scoped.
     const key = JSON.stringify([skuCode])
     const group = groups.get(key) || { key, skuCode, specification: shortName(skuCode), quantity: 0 }
     const quantityKnown = typeof order.quantity === 'number' && Number.isSafeInteger(order.quantity) && order.quantity >= 0
-    if (!dateKnown) issue(order.storeId, '缺少有效支付日期，无法确定统计范围')
-    if (!quantityKnown) issue(order.storeId, '缺少有效整数件数')
+    const blocked = { ...context, blocksQuantity: true }
+    if (!dateKnown) issue(order.storeId, '缺少有效支付日期，无法确定统计范围', blocked)
+    if (!quantityKnown) issue(order.storeId, '缺少有效整数件数', blocked)
     group.quantity = !dateKnown || !quantityKnown || group.quantity === null ? null : group.quantity + order.quantity!
-    if (group.quantity !== null && !Number.isSafeInteger(group.quantity)) { group.quantity = null; issue(order.storeId, '件数超出可精确统计范围') }
+    if (group.quantity !== null && !Number.isSafeInteger(group.quantity)) { group.quantity = null; issue(order.storeId, '件数超出可精确统计范围，请核对原报表件数', blocked) }
     groups.set(key, group)
   }
   const ledgerDates = new Set<string>()
@@ -73,7 +81,7 @@ export function summarizeSpecSales(data: WorkbenchData, filter: SpecSalesFilter 
     for (const order of ledger.orders) {
       ledgerDates.add(JSON.stringify([ledger.storeId, order.date]))
       if (order.cancelled || order.supplement || !inRange(order.date) || unshipped.has(orderKey(ledger.storeId, order.id))) continue
-      if (!indexed.has(orderKey(ledger.storeId, order.id))) issue(ledger.storeId, '历史订单缺少规格明细，需补导原订单报表')
+      if (!indexed.has(orderKey(ledger.storeId, order.id))) issue(ledger.storeId, '历史订单缺少规格明细，需补导原订单报表', { date: order.date, orderId: order.id })
     }
   }
   const uncoveredDates = new Set<string>()
@@ -81,11 +89,14 @@ export function summarizeSpecSales(data: WorkbenchData, filter: SpecSalesFilter 
     const key = JSON.stringify([record.storeId, record.date])
     if (storeIds.has(record.storeId) && inRange(record.date) && record.orderCount > 0 && !ledgerDates.has(key)) uncoveredDates.add(key)
   }
-  for (const key of uncoveredDates) issue((JSON.parse(key) as string[])[0], '历史汇总日期缺少逐单记录，需补导原订单报表（天）')
+  for (const key of uncoveredDates) {
+    const [storeId, date] = JSON.parse(key) as [string, string]
+    issue(storeId, '历史汇总日期缺少逐单记录，需补导原订单报表（天）', { date })
+  }
   const rows = [...groups.values()].sort((a, b) => a.skuCode.localeCompare(b.skuCode, 'zh-CN'))
   const warnings = stores.flatMap(store => {
     const messages = [...(issues.get(store.id) || [])].map(([reason, count]) => `${reason}：${count}`)
     return messages.map(message => `${store.name}：${message}`)
   })
-  return { rows, warnings, complete: issues.size === 0 }
+  return { rows, warnings, diagnostics, complete: issues.size === 0 }
 }

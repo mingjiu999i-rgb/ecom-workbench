@@ -1,4 +1,4 @@
-import { BarChart3, Box, Boxes, Calculator, Check, ChevronRight, ClipboardList, Cloud, CloudAlert, Database, FilePenLine, LayoutDashboard, LoaderCircle, LogOut, Menu, X } from 'lucide-react'
+import { BarChart3, Box, Boxes, Calculator, Check, ChevronRight, ClipboardList, Cloud, CloudAlert, Database, FilePenLine, LayoutDashboard, LoaderCircle, LogOut, Menu, RotateCcw, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useWorkbench } from '../store/workbench'
@@ -13,6 +13,7 @@ const items = [
   { to: '/operations', label: '调整记录', icon: ClipboardList },
   { to: '/master-data', label: '基础资料', icon: Database },
   { to: '/profit-preview', label: '经营结算', icon: BarChart3 },
+  { to: '/refund-review', label: '退款影响复盘', icon: RotateCcw },
   { to: '/link-profit', label: '商品 ID 盈亏', icon: Calculator },
 ]
 

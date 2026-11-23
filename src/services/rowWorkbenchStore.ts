@@ -95,16 +95,25 @@ async function readFullRows(transport: RowTransport, signal?: AbortSignal, concu
 // 'rows'; no fallback to a legacy snapshot is allowed after activation.
 export function createRowWorkbenchStore(transport: RowTransport) {
   let baseline: StoredRow[] | null = null, revision = '', queue = Promise.resolve()
-  let pending: { rows: StoredRow[]; changes: RowChange[]; id: string; revision: string; fingerprint: string } | null = null
+  let pending: { rows: StoredRow[]; changes: RowChange[]; chunks: RowChange[][]; nextChunk: number; offset: number; id: string; revision: string; fingerprint: string } | null = null
   async function finish(signal?: AbortSignal) {
     const request = pending!
     signal?.throwIfAborted()
     let saved = await transport.begin({ id: request.id, revision: request.revision, fingerprint: request.fingerprint, count: request.changes.length }, signal)
     if (saved === null) {
-      let offset = 0
-      for (const chunk of chunkRowChanges(request.changes)) {
+      while (request.nextChunk < request.chunks.length) {
+        const chunk = request.chunks[request.nextChunk]
         signal?.throwIfAborted()
-        await transport.stage(request.id, offset, chunk, signal); offset += chunk.length
+        try { await transport.stage(request.id, request.offset, chunk, signal) }
+        catch (error) {
+          // A separately approved server compaction fix may need to normalize
+          // an older prefix. Size failures are not automatically retried.
+          if ((error as { code?: string } | null)?.code === '54000') { request.nextChunk = 0; request.offset = 0 }
+          throw error
+        }
+        // Advance only after acknowledgement. A lost reply replays just this
+        // chunk under the same ID; the server still verifies its exact payload.
+        request.offset += chunk.length; request.nextChunk++
       }
       saved = await transport.commit(request.id, signal)
     }
@@ -158,11 +167,11 @@ export function createRowWorkbenchStore(transport: RowTransport) {
         if (pending) await finish(signal)
         const rows = encodeWorkbenchRows(snapshot), changes = diffWorkbenchRows(baseline, rows)
         if (!changes.length) return
-        chunkRowChanges(changes)
+        const chunks = chunkRowChanges(changes)
         if (changes.length > 100000) throw new Error('Import exceeds batch limit; local backup retained')
         const bytes = new TextEncoder().encode(JSON.stringify(changes))
         const fingerprint = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(value => value.toString(16).padStart(2, '0')).join('')
-        pending = { rows, changes, id: crypto.randomUUID(), revision, fingerprint }
+        pending = { rows, changes, chunks, nextChunk: 0, offset: 0, id: crypto.randomUUID(), revision, fingerprint }
         await finish(signal)
       })
       queue = operation

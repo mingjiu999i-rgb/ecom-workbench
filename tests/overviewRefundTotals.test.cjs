@@ -6,7 +6,7 @@ require.extensions['.ts'] = (module, filename) => {
   const output = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } })
   module._compile(output.outputText, filename)
 }
-const { observeOverviewRefunds: observe, summarizeOverviewRefundTotals: totals, overviewRefundDetailClients: detailClients } = require('../src/utils/overviewRefundActivity.ts')
+const { observeOverviewRefunds: observe, summarizeOverviewRefundTotals: totals, overviewRefundDetailClients: detailClients, summarizePendingRefundFunds: pendingFunds } = require('../src/utils/overviewRefundActivity.ts')
 const prior = '2026-10-14T01:00:00Z', morning = '2026-10-15T01:00:00Z', later = '2026-10-15T02:00:00Z'
 const day = '2026-10-15', all = new Set(['a', 'b', 'c'])
 const row = (storeId, amount, date = '2026-09-30') => ({ id: `${storeId}|${date}`, storeId, date, shippedRefund: amount, refundBasis: 'order_paid_at' })
@@ -138,6 +138,36 @@ test('adjustments remain signed and all store changes still sum to the net incre
   assert.equal(summary.amount, 80)
   assert.equal(summary.stores.find(store => store.storeId === 'b').amount, -40)
   assert.equal(summary.after - summary.before, summary.amount)
+  assert.equal(summary.added, 120)
+  assert.equal(summary.reduced, -40)
+  assert.equal(summary.stores.find(store => store.storeId === 'b').added, 0)
+})
+
+test('same-day corrections reduce the confirmed addition instead of counting repeated import events', () => {
+  let value = update(baseline(), [row('a', 300), row('b', 300), row('c', 500)])
+  value = update(value, [row('a', 270), row('b', 300), row('c', 500)], later)
+  assert.equal(totals(value, day, all).added, 70)
+  assert.equal(totals(value, day, all).amount, 70)
+})
+
+test('pending principal funds are read from the ledger by store without treating known unshipped refunds as shipped', () => {
+  const value = data([])
+  value.orderAccountingLedgers = [{ storeId: 'a', initializedDates: ['2026-11-01'],
+    orders: [{ id: 'known', date: '2026-11-01' }, { id: 'unshipped', date: '2026-11-01' }, { id: 'blocked', date: '2026-11-02' }],
+    refunds: [{ orderId: 'unshipped', success: true, stage: '未发货' }, { orderId: 'unshipped-without-order', success: true, stage: '未发货' }, { orderId: 'blocked', success: true, stage: '已发货' }],
+    funds: [
+      { key: 'missing-order', orderId: 'absent', businessCode: '0020002', category: 'refund', income: 0, expense: -30 },
+      { key: 'missing-sale', orderId: 'known', businessCode: '0020002', category: 'refund', income: 0, expense: -20 },
+      { key: 'pending-date', orderId: 'blocked', businessCode: '0020002', category: 'refund', income: 0, expense: -10 },
+      { key: 'excluded', orderId: 'unshipped', businessCode: '0020002', category: 'refund', income: 0, expense: -5 },
+      { key: 'excluded-without-order', orderId: 'unshipped-without-order', businessCode: '0020002', category: 'refund', income: 0, expense: -7 },
+      { key: 'coupon', orderId: 'known', businessCode: '0020005', category: 'refund', income: 0, expense: -2 },
+    ] }]
+  const before = JSON.stringify(value)
+  const result = pendingFunds(value, new Set(['a']))
+  assert.equal(result.amount, 60)
+  assert.deepEqual([result.stores[0].missingOrder, result.stores[0].missingAfterSale, result.stores[0].awaitingSource], [30, 20, 10])
+  assert.equal(JSON.stringify(value), before)
 })
 
 test('saved-day counts use actual distinct dates, not an invented continuous date range', () => {

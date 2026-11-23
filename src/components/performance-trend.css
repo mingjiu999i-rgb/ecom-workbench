@@ -30,4 +30,6 @@
 .performance-trend-tooltip span { display: inline-flex; align-items: center; gap: 7px; color: #64748b; }
 .performance-trend-tooltip b { font-weight: 600; white-space: nowrap; }
 .performance-trend-tooltip .performance-trend-difference { padding-top: 9px; border-top: 1px solid #edf0f7; }
+.performance-trend .performance-trend-note { margin: -10px 0 20px; }
+.performance-trend-tooltip-note { margin: 9px 0 0; color: #74829a; font-size: 11px; line-height: 1.6; }
 @media (max-width: 600px) { .performance-trend-axis { flex-basis: 65px; font-size: 9px; } .performance-trend-chart { gap: 6px; } .performance-trend-legend > button { min-height: 36px; } }

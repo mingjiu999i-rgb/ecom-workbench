@@ -40,7 +40,7 @@ test('daily after-sale cost uses displayed refunds and weighted totals, scoped b
   assert.equal(sheet.R8.v, 6)
   assert.equal(sheet.R9.v, 3.5)
   assert.equal(book.Sheets['B店回款'].R7.v, 1)
-  assert.equal(XLSX.utils.decode_range(sheet['!ref']).e.c, 17)
+  assert.equal(XLSX.utils.decode_range(sheet['!ref']).e.c, 18)
   assert.equal(sheet.R8.s.numFmt, '#,##0.00;[Red]-#,##0.00')
   const filtered = createSettlementWorkbook(data, { clientId: 'c', startDate: '2026-10-25', endDate: '2026-10-25' })
   assert.equal(filtered.Sheets['A店回款'].R7.v, 6)

@@ -62,4 +62,5 @@ export interface WorkbenchData {
   skus: Sku[]; productCosts: ProductCost[]; operations: Operation[]; skuHistory: SkuHistory[]; todos: TodoItem[]
   profitRecords: ProfitRecord[]; collectionRecords: CollectionRecord[]
   orderAccountingLedgers?: OrderAccountingLedger[]
+  profitBaselines?: import('../utils/profitBaselines').ProfitBaseline[]
 }

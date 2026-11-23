@@ -101,12 +101,24 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
   }
   const total = (rows: RefundBalance[]) => rows.some(row => row.amount == null) ? null : rows.reduce((sum, row) => sum + cents(row.amount!), 0) / 100
   const difference = (after: number | null, prior: number | null) => after == null || prior == null ? null : (cents(after) - cents(prior)) / 100
+  const movement = (afterRows: RefundBalance[], beforeRows: RefundBalance[]) => {
+    if (!opening || [...afterRows, ...beforeRows].every(row => row.amount != null) === false) return { added: null, reduced: null }
+    const afterByDay = new Map(afterRows.map(row => [key(row), cents(row.amount!)]))
+    const beforeByDay = new Map(beforeRows.map(row => [key(row), cents(row.amount!)]))
+    let added = 0; let reduced = 0
+    for (const day of new Set([...afterByDay.keys(), ...beforeByDay.keys()])) {
+      const delta = (afterByDay.get(day) || 0) - (beforeByDay.get(day) || 0)
+      if (delta > 0) added += delta
+      else reduced += delta
+    }
+    return { added: added / 100, reduced: reduced / 100 }
+  }
   const stores = [...storeIds].map(storeId => {
     const store = data.stores.find(row => row.id === storeId)
     const records = current.filter(row => row.storeId === storeId)
     const previous = before.filter(row => row.storeId === storeId)
     const after = total(records), prior = opening ? total(previous) : null
-    return { storeId, name: store?.name || '历史店铺', clientId: store?.clientId || '',
+    return { storeId, name: store?.name || '历史店铺', clientId: store?.clientId || '', ...movement(records, previous),
       before: prior, after, amount: difference(after, prior), originalSales: totalSales(new Set([storeId])),
       recordedDays: new Set(records.map(row => row.orderDate)).size,
       hasData: records.length > 0 || previous.length > 0,
@@ -119,14 +131,14 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
     const records = current.filter(row => ids.has(row.storeId))
     const previous = before.filter(row => ids.has(row.storeId))
     const after = total(records), prior = opening ? total(previous) : null
-    return { clientId, name: data.clients.find(row => row.id === clientId)?.name || '未关联甲方',
+    return { clientId, name: data.clients.find(row => row.id === clientId)?.name || '未关联甲方', ...movement(records, previous),
       before: prior, after, amount: difference(after, prior), stores: children, originalSales: totalSales(ids),
       recordedDays: new Set(records.map(row => row.orderDate)).size }
   })
   const hasData = current.length > 0 || before.length > 0
   const after = hasData ? total(current) : null
   const prior = hasData && opening ? total(before) : null
-  return { date, before: prior, after, amount: difference(after, prior), stores, clients, hasData, originalSales: totalSales(storeIds),
+  return { date, before: prior, after, amount: difference(after, prior), ...movement(current, before), stores, clients, hasData, originalSales: totalSales(storeIds),
     recordedDays: new Set(current.map(row => row.orderDate)).size,
     partialDay: opening?.partial ?? true, baselineAt: opening?.observedAt || null,
     unknownBalances: stores.reduce((sum, row) => sum + row.unknownBalances, 0) }
@@ -134,8 +146,36 @@ export function summarizeOverviewRefundTotals(data: WorkbenchData, date: string,
 
 // Hide only confirmed zero changes; unknown amounts still need reconciliation.
 export function overviewRefundDetailClients(summary: ReturnType<typeof summarizeOverviewRefundTotals>) {
-  return summary.clients.map(client => ({ ...client, stores: client.stores.filter(store => store.amount !== 0) }))
+  return summary.clients.map(client => ({ ...client, stores: client.stores.filter(store => store.added !== 0 || store.reduced !== 0 || store.amount === null) }))
     .filter(client => client.stores.length > 0)
+}
+
+// Read-only reconciliation of principal refund funds that cannot yet be
+// classified and backfilled into a saved order-date settlement row.
+export function summarizePendingRefundFunds(data: WorkbenchData, storeIds: Set<string>) {
+  const stores = (data.orderAccountingLedgers || []).filter(ledger => storeIds.has(ledger.storeId)).map(ledger => {
+    const orders = new Map(ledger.orders.map(order => [order.id, order]))
+    const refundsByOrder = new Map<string, typeof ledger.refunds>()
+    for (const refund of ledger.refunds) refundsByOrder.set(refund.orderId, [...(refundsByOrder.get(refund.orderId) || []), refund])
+    const initialized = new Set(ledger.initializedDates)
+    let missingOrder = 0; let missingAfterSale = 0; let awaitingSource = 0
+    for (const fund of ledger.funds) {
+      if (fund.category !== 'refund' || fund.businessCode === '0020005') continue
+      const amount = -cents(fund.income + fund.expense)
+      if (amount <= 0) continue
+      const refunds = refundsByOrder.get(fund.orderId) || []
+      if (refunds.some(refund => refund.success && refund.stage === '未发货')) continue
+      if (refunds.length && !refunds.some(refund => refund.success && refund.stage === '已发货')) continue
+      const order = orders.get(fund.orderId)
+      if (!order) { missingOrder += amount; continue }
+      if (!refunds.length) { missingAfterSale += amount; continue }
+      if (!initialized.has(order.date)) awaitingSource += amount
+    }
+    return { storeId: ledger.storeId, name: data.stores.find(store => store.id === ledger.storeId)?.name || '历史店铺',
+      missingOrder: missingOrder / 100, missingAfterSale: missingAfterSale / 100, awaitingSource: awaitingSource / 100,
+      amount: (missingOrder + missingAfterSale + awaitingSource) / 100 }
+  }).filter(store => store.amount > 0).sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name, 'zh-CN'))
+  return { stores, amount: stores.reduce((total, store) => total + cents(store.amount), 0) / 100 }
 }
 
 export function summarizeOverviewRefunds(data: WorkbenchData, start: string, end: string, storeIds: Set<string>) {

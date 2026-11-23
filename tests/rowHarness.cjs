@@ -32,6 +32,8 @@ async function database() {
   await db.exec('grant select,insert,update,delete on public.workbench_documents to authenticated;')
   await db.exec(fs.readFileSync(path.join(root, 'supabase/proposals/202610220001_workbench_rows.sql'), 'utf8'))
   await db.exec(fs.readFileSync(path.join(root, 'supabase/proposals/20261023092148_compact_workbench_positions.sql'), 'utf8'))
+  await db.exec(fs.readFileSync(path.join(root, 'supabase/proposals/20261116024422_deduplicate_workbench_staging_identity.sql'), 'utf8'))
+  await db.exec(fs.readFileSync(path.join(root, 'supabase/proposals/20261117020519_seek_workbench_read_pages.sql'), 'utf8'))
   return db
 }
 async function seed(db, doc, uid = OWNER, mode = 'rows') {

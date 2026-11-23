@@ -3,7 +3,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const logic = require('../src/utils/storeBusinessReset.ts')
 const source = path.resolve(__dirname, '../src/pages/StoreBusinessReset.tsx'), realRequire = createRequire(source)
 const tick = () => new Promise(resolve => setImmediate(resolve))
-function harness(storage = new Map()) {
+function harness(storage = new Map(), selectedDate = '*') {
   const state = [], refs = [], effects = []; let cursor = 0, refCursor = 0, effectCursor = 0, writes = 0, localWrites = 0, dirty = false
   let data = { clients: [{ id: 'c', name: '甲方' }], stores: [{ id: 'a', name: '甲店', clientId: 'c' }, { id: 'b', name: '乙店', clientId: 'c' }], products: [], productLinks: [], productCosts: [], skus: [], operations: [], skuHistory: [], todos: [], profitRecords: [], collectionRecords: [], orderAccountingLedgers: ['a','b'].map(storeId => ({ storeId, initializedDates: ['2026-10-01'], orders: [{ id: 'same-id', date: '2026-10-01', receipt: 100, quantity: 1, productId: 'p', unitCost: 20, supplement: false, cancelled: false }], refunds: [], funds: [], promotions: [] })) }
   let status = 'saved', account = 'qa@example.invalid', saveError = false, gate = null
@@ -29,20 +29,39 @@ function harness(storage = new Map()) {
   const button = label => find('button', node => text(node).includes(label))
   const confirm = (value = '甲店') => find('input', node => node.props.placeholder === '请输入店铺全名').props.onChange({ target: { value } })
   render()
-  return { render, button, text, storage, confirm, get data() { return data }, get writes() { return writes }, get localWrites() { return localWrites }, setStatus(value) { status = value; render() }, setAccount(value) { account = value; render() }, failSave() { saveError = true }, holdSave() { let release; gate = new Promise(resolve => release = resolve); return release }, changeData(recipe) { data = recipe(data); render() }, async flush() { await tick(); render() }, reset() { find('form').props.onSubmit({ preventDefault() {} }) }, undo() { button('撤销本次清空')?.props.onClick() }, unmount() { effects.forEach(effect => effect.cleanup?.()) } }
+  const selectDate = value => { find('select', node => node.props.value !== 'a').props.onChange({ target: { value } }); render() }
+  if (selectedDate) selectDate(selectedDate)
+  return { render, button, text, storage, confirm, selectDate, get data() { return data }, get writes() { return writes }, get localWrites() { return localWrites }, setStatus(value) { status = value; render() }, setAccount(value) { account = value; render() }, failSave() { saveError = true }, holdSave() { let release; gate = new Promise(resolve => release = resolve); return release }, changeData(recipe) { data = recipe(data); render() }, async flush() { await tick(); render() }, reset() { find('form')?.props.onSubmit({ preventDefault() {} }) }, undo() { button('撤销本次清空')?.props.onClick() }, unmount() { effects.forEach(effect => effect.cleanup?.()) } }
 }
 test('no manual download or checkbox: exact store name triggers automatic snapshot before reset', async () => {
   const ui = harness(); await ui.flush()
   assert.equal(ui.button('下载'), undefined)
-  assert.equal(ui.button('全部经营数据').props.disabled, true)
+  assert.equal(ui.button('全部日期经营数据').props.disabled, true)
   ui.confirm('甲'); ui.reset(); await ui.flush(); assert.equal(ui.writes, 0)
   ui.confirm(); const other = ui.data.orderAccountingLedgers[1]
-  assert.equal(ui.button('全部经营数据').props.disabled, false)
+  assert.equal(ui.button('全部日期经营数据').props.disabled, false)
   ui.reset(); assert.equal(ui.writes, 0)
   await ui.flush()
   assert.equal(ui.localWrites, 1); assert.equal(ui.writes, 1); assert.equal(ui.data.orderAccountingLedgers[0], other)
   assert.equal(ui.data.orderAccountingLedgers.length, 1)
   assert.equal(ui.button('撤销本次清空').props.disabled, false)
+})
+test('date is required; selecting one day resets and restores only that day', async () => {
+  const ui = harness(new Map(), ''); await ui.flush()
+  assert.equal(ui.button('全部日期经营数据'), undefined)
+  ui.changeData(data => {
+    const next = structuredClone(data)
+    next.orderAccountingLedgers[0].orders.push({ ...next.orderAccountingLedgers[0].orders[0], id: 'next-day', date: '2026-10-02', unitCost: 25 })
+    next.orderAccountingLedgers[0].initializedDates.push('2026-10-02')
+    return next
+  })
+  ui.selectDate('2026-10-01'); ui.confirm()
+  assert.equal(ui.button('2026-10-01经营数据').props.disabled, false)
+  ui.reset(); await ui.flush()
+  assert.deepEqual(ui.data.orderAccountingLedgers[0].orders.map(row => row.id), ['next-day'])
+  assert.equal(ui.button('撤销本次清空').props.disabled, false)
+  ui.undo()
+  assert.deepEqual(ui.data.orderAccountingLedgers.find(row => row.storeId === 'a').orders.map(row => row.id).sort(), ['next-day', 'same-id'])
 })
 test('failed or uncommitted temporary storage never clears business data; duplicate submit is ignored', async () => {
   const ui = harness(); await ui.flush(); ui.confirm(); ui.failSave(); ui.reset(); await ui.flush()
@@ -62,7 +81,7 @@ test('page refresh reloads same-account store snapshot and undo preserves origin
   newOrders.undo(); assert.equal(newOrders.writes, 0)
 })
 test('synchronizing/errors and source edits during automatic persistence block clearing', async () => {
-  for (const status of ['saving','error']) { const ui = harness(); await ui.flush(); ui.confirm(); ui.setStatus(status); assert.equal(ui.button('全部经营数据').props.disabled, true); ui.reset(); await ui.flush(); assert.equal(ui.writes, 0) }
+  for (const status of ['saving','error']) { const ui = harness(); await ui.flush(); ui.confirm(); ui.setStatus(status); assert.equal(ui.button('全部日期经营数据').props.disabled, true); ui.reset(); await ui.flush(); assert.equal(ui.writes, 0) }
   const ui = harness(); await ui.flush(); ui.confirm(); const release = ui.holdSave(); ui.reset(); ui.changeData(data => { const next = structuredClone(data); next.orderAccountingLedgers[0].orders[0].receipt = 77; return next }); release(); await ui.flush()
   assert.equal(ui.writes, 0); assert.equal(ui.data.orderAccountingLedgers[0].orders[0].receipt, 77); assert.match(ui.text(ui.render()), /暂存期间/)
 })

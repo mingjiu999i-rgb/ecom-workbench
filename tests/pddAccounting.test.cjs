@@ -143,6 +143,131 @@ test('settlement workbook uses the same order-date refund in filtered summary an
   assert.equal(workbook.Sheets['总览'].G7.v, 30)
 })
 
+test('product preview updates effective sales when a confirmed refund is backfilled', () => {
+  const result = next(initial(), { refunds: [refund()], funds: [
+    fund('refund', -30, 0, '0020002', 'refund'),
+    fund('coupon', -2, 0, '0020005', 'refund'),
+    fund('fee', -5), fund('compensation', -3, 0, '0040002'), fund('small', -2, 0, '0040001'),
+  ] })
+  const currentCollection = records(result)[0]
+  const currentProfit = profitRecords(result)[0]
+  const data = {
+    clients: [{ id: 'client', name: '甲方' }],
+    stores: [{ id: 'store', clientId: 'client', name: '店铺', storeStatus: '启用' }],
+    products,
+    collectionRecords: [currentCollection, { ...currentCollection, id: 'legacy', date: '2026-10-02' }],
+    profitRecords: [currentProfit, { ...currentProfit, id: 'legacy', date: '2026-10-02' }],
+    orderAccountingLedgers: [result.ledger],
+  }
+  const preview = createSettlementWorkbook(data, { clientId: 'client' }).Sheets['产品预览']
+  assert.deepEqual(Array.from({ length: 12 }, (_, index) => preview[`B${index + 5}`].v), [
+    '店铺成交额（对照）', '货品成本', '商品毛利润', '推广花费', '运营费用预估', '当天销量',
+    '初始盈亏', '初始毛利率', '退款扣款', '有效销售额', '最新盈亏', '最新毛利率',
+  ])
+  assert.equal(preview.C5.v, 100)
+  assert.equal(preview.D5.v, 100)
+  assert.equal(preview.E5.v, 200)
+  assert.equal(preview.C6.v, 30)
+  assert.equal(preview.C7.v, preview.C5.v - preview.C6.v)
+  assert.equal(preview.C9.v, 2)
+  assert.equal(preview.C14.v, 68)
+  assert.equal(preview.D14.v, 68)
+  assert.equal(preview.E14.v, 136)
+  assert.equal(preview.D6.v, currentProfit.cost)
+  assert.equal(preview.E6.v, currentProfit.cost * 2)
+  assert.equal(preview.D8.v, currentProfit.promotion)
+  assert.equal(preview.E8.v, currentProfit.promotion * 2)
+  assert.equal(preview.D9.v, currentProfit.operationFee)
+  assert.equal(preview.E9.v, currentProfit.operationFee * 2)
+  assert.equal(preview.D10.v, currentProfit.quantity)
+  assert.equal(preview.E10.v, currentProfit.quantity * 2)
+  assert.equal(preview.E7.v, '')
+  assert.equal(preview.E11.v, '')
+  assert.equal(preview.C11.v, 48)
+  assert.equal(preview.C12.v, 0.48)
+  assert.equal(preview.C13.v, 42)
+  assert.equal(preview.C15.v, 6)
+  assert.equal(preview.C16.v, 0.06)
+  assert.equal(preview.D11.v, '')
+  assert.equal(preview.E13.v, '')
+  assert(!Object.values(preview).some(cell => cell?.v === '待补齐'))
+  assert.equal(preview.C14.v + preview.C13.v - preview.C5.v, 10) // Service fee, compensation and small payment.
+  const later = next(result, { funds: [fund('refund-later', -10, 0, '0020002', 'refund')] })
+  const changed = createSettlementWorkbook({ ...data, collectionRecords: records(later), profitRecords: profitRecords(later), orderAccountingLedgers: [later.ledger] }, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(changed.C5.v, 100)
+  assert.equal(changed.C14.v, 58)
+  assert.equal(changed.C13.v, 52)
+  assert.equal(changed.C15.v, -4)
+  const mixedDay = createSettlementWorkbook({ ...data,
+    stores: [...data.stores, { id: 'legacy', clientId: 'client', name: '历史店铺', storeStatus: '启用' }],
+    collectionRecords: [currentCollection, { ...currentCollection, id: 'legacy', storeId: 'legacy' }],
+    profitRecords: [currentProfit, { ...currentProfit, id: 'legacy', storeId: 'legacy' }],
+  }, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(mixedDay.C5.v, 200)
+  assert.equal(mixedDay.C6.v, currentProfit.cost * 2)
+  assert.equal(mixedDay.C8.v, currentProfit.promotion * 2)
+  assert.equal(mixedDay.C9.v, currentProfit.operationFee * 2)
+  assert.equal(mixedDay.C10.v, currentProfit.quantity * 2)
+  assert.equal(mixedDay.C14.v, 136)
+  assert.equal(mixedDay.C13.v, '')
+})
+
+test('product preview attributes deductions to their order product and rejects mismatched product totals', () => {
+  const otherProduct = { id: 'other-product', name: '另一产品', operationRate: 0.02 }
+  const otherOrder = { ...order('251001-2'), receipt: 50, product: otherProduct.name }
+  const result = preparePddAccounting(input({
+    orders: [order(), otherOrder], refunds: [refund()], promotions: [promotion], products: [...products, otherProduct],
+    funds: [fund('credit-a', 0, 100, '0010002', 'positive'), fund('credit-b', 0, 50, '0010002', 'positive', otherOrder.id),
+      fund('refund', -30, 0, '0020002', 'refund'), fund('fee', -5, 0, '0030002', 'other', otherOrder.id)],
+    resolveCost: current => ({ ...resolveCost(), cost: current.id === otherOrder.id ? 20 : 30, productId: current.id === otherOrder.id ? otherProduct.id : products[0].id }),
+  }))
+  const data = {
+    clients: [{ id: 'client', name: '甲方' }], stores: [{ id: 'store', clientId: 'client', name: '店铺', storeStatus: '启用' }],
+    products: [...products, otherProduct], collectionRecords: records(result), profitRecords: profitRecords(result), orderAccountingLedgers: [result.ledger],
+  }
+  const amountAt = (preview, name, metricOffset) => {
+    const heading = Object.entries(preview).find(([address, cell]) => /^A\d+$/.test(address) && cell.v === name)?.[0]
+    assert(heading, `missing ${name}`)
+    return preview[`C${Number(heading.slice(1)) + metricOffset}`].v
+  }
+  const preview = createSettlementWorkbook(data, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(amountAt(preview, '产品', 1), 100)
+  assert.equal(amountAt(preview, '产品', 9), 30)
+  assert.equal(amountAt(preview, otherProduct.name, 1), 50)
+  assert.equal(amountAt(preview, otherProduct.name, 9), 5)
+
+  const mismatched = { ...data, profitRecords: data.profitRecords.map(row => ({ ...row, amount: row.amount === 70 ? 50 : 70 })) }
+  const historical = createSettlementWorkbook(mismatched, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(amountAt(historical, '产品', 1), '')
+  assert.equal(amountAt(historical, otherProduct.name, 1), '')
+
+  const wrongCosts = { ...data, profitRecords: data.profitRecords.map(row => ({ ...row, cost: row.cost === 30 ? 20 : 30 })) }
+  const untrusted = createSettlementWorkbook(wrongCosts, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(amountAt(untrusted, '产品', 1), '')
+  assert.equal(amountAt(untrusted, otherProduct.name, 1), '')
+})
+
+test('incomplete order index never presents its small subset as the full day', () => {
+  const result = initial()
+  const collection = { ...records(result)[0], originalSales: 930, effectiveSales: 928 }
+  const profit = { ...profitRecords(result)[0], amount: 927, cost: 700, promotion: 20, operationFee: 18, quantity: 40 }
+  const data = {
+    clients: [{ id: 'client', name: '甲方' }],
+    stores: [{ id: 'store', clientId: 'client', name: '店铺', storeStatus: '启用' }],
+    products, collectionRecords: [collection], profitRecords: [profit], orderAccountingLedgers: [result.ledger],
+  }
+  const preview = createSettlementWorkbook(data, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(preview.B5.v, '店铺成交额（对照）')
+  assert.equal(preview.C5.v, 930)
+  assert.equal(preview.C6.v, 700)
+  assert.equal(preview.C8.v, 20)
+  assert.equal(preview.C9.v, 18)
+  assert.equal(preview.C10.v, 40)
+  assert.equal(preview.C14.v, 927)
+  for (const row of [7, 11, 12, 13, 15, 16]) assert.equal(preview[`C${row}`].v, '')
+  assert.equal(createSettlementWorkbook(data, { clientId: 'client' }).Sheets['店铺回款'].D8.v, 930)
+})
+
 test('all clients export separate overview, product preview and store details with cross-store monthly totals', t => {
   // Keep the appended yesterday section aligned with this October 1 fixture.
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-02T04:00:00Z') })
@@ -164,15 +289,19 @@ test('all clients export separate overview, product preview and store details wi
   assert.equal(preview.A1.v, '产品利润汇总')
   assert.equal(preview.C4.v, '10月1日')
   assert.equal(preview.D4.v, '10月份数据')
+  assert.equal(preview.B5.v, '店铺成交额（对照）')
   assert.equal(preview.C5.v, 200)
   assert.equal(preview.D5.v, 200)
-  assert.equal(preview.D10.v, baseProfit.estimatedProfit * 2)
-  assert.equal(preview.D12.v, baseProfit.estimatedProfit / baseProfit.amount)
-  assert.equal(workbook.Sheets['总览']['!ref'], 'A1:L16') // Compact specification summary follows the unchanged A1:L10 financial canvas.
+  assert.equal(preview.C14.v, 200)
+  assert.equal(preview.D14.v, 200)
+  assert.equal(preview.D7.v, '')
+  assert.equal(workbook.Sheets['总览'].A12.v, '规格销量汇总')
+  assert.equal(workbook.Sheets['总览'].A18.v, '销量待补明细')
+  assert.equal(workbook.Sheets['总览']['!ref'], 'A1:M21') // Keep the production initial-profit column M.
   assert(!Object.values(workbook.Sheets['总览']).some(cell => cell?.v === '产品利润汇总'))
   const other = createSettlementWorkbook(data, { clientId: 'other' })
   assert.deepEqual(other.SheetNames, ['总览', '产品预览', '另一甲方店回款'])
-  assert.equal(other.Sheets['产品预览'].C5.v, 100)
+  assert.equal(other.Sheets['产品预览'].C14.v, 100)
   const empty = createSettlementWorkbook({ ...data, profitRecords: [] }, { clientId: 'client' })
   assert.equal(empty.Sheets['产品预览'].A4.v, '暂无已同步的产品利润数据')
 })

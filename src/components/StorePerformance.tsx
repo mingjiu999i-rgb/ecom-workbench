@@ -6,6 +6,7 @@ import { buildPerformance, shiftDate, summarizePerformance, validDate, type Perf
 import { Modal } from './Overlay'
 import { OverviewRefundMetric } from './OverviewRefundActivity'
 import { PerformanceTrend } from './PerformanceTrend'
+import { usePerformanceBaselines } from './usePerformanceBaselines'
 
 const money = (value: number | null) => value == null ? '—' : `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const percent = (value: number | null) => value == null ? '—' : `${(value * 100).toFixed(2)}%`
@@ -14,6 +15,8 @@ type Dialog = { kind: 'profit' | 'issues' | 'refund'; label: string; storeIds: s
 
 export function StorePerformance() {
   const { data } = useWorkbench()
+  const initial = usePerformanceBaselines()
+  const chartData = useMemo(() => ({ ...data, profitBaselines: initial.rows }), [data, initial.rows])
   const navigate = useNavigate(), location = useLocation()
   const [params, setParams] = useSearchParams()
   const [dialog, setDialog] = useState<Dialog | null>(null)
@@ -27,7 +30,7 @@ export function StorePerformance() {
   const validRange = validDate(startDate) && validDate(endDate) && startDate <= endDate
   const selectedStore = data.stores.find(store => store.id === storeId)
   const rangeLabel = startDate === endDate ? startDate : `${startDate} 至 ${endDate}`
-  const performance = useMemo(() => buildPerformance(data, validRange ? startDate : today, validRange ? endDate : today, storeId, yesterday), [data, startDate, endDate, storeId, yesterday, today, validRange])
+  const performance = useMemo(() => buildPerformance(chartData, validRange ? startDate : today, validRange ? endDate : today, storeId, yesterday), [chartData, startDate, endDate, storeId, yesterday, today, validRange])
   const allIds = performance.stores.map(store => store.id)
   const dialogSummary = dialog ? summarizePerformance(data, startDate, endDate, new Set(dialog.storeIds)) : null
   const changeFilter = (changes: Record<string, string>) => setParams(current => { const next = new URLSearchParams(current); Object.entries(changes).forEach(([key, val]) => val ? next.set(key, val) : next.delete(key)); return next }, { replace: true })
@@ -78,7 +81,7 @@ export function StorePerformance() {
       <p className="performance-note">已发货退款按原订单成交日期回填，后续退款更新原日期的销售额和利润。{performance.total.legacyRefund && '部分数据仍为旧版退款口径，请在经营结算重新导入报表。'}{performance.total.partial && '销售额、运营费用和盈利按已保存的产品数据汇总；金额可能不完整，可点击“部分汇总”查看待处理日期。'}</p>
       {!performance.total.recordCount ? <div className="performance-empty">{rangeLabel} 暂无已保存的经营数据，请到经营结算导入报表。<button className="text-button" onClick={() => detail(selectedStore?.id || allIds[0] || '')}>前往经营结算 <ArrowRight size={14} /></button></div> : <>
         <div className="refund-overview"><div><strong>同期订单已发货退款率 <b>{percent(performance.total.refundRate)}</b></strong><span>同期订单已发货退款 ÷ 同期订单成交额</span></div><button className="text-button" onClick={() => show('refund', selectedStore?.name || '全部店铺')}>本期退款来源 <ArrowRight size={14} /></button></div>
-        <PerformanceTrend trend={performance.trend} monthly={performance.monthly} comparison={comparison} comparisonPeriod={`${performance.previousStart} 至 ${performance.previousEnd}`} onSelect={(start, end) => changeFilter({ period: 'custom', start, end })} />
+        <PerformanceTrend initialStatus={initial.status} initialError={initial.error} onRetryInitial={initial.retry} trend={performance.trend} monthly={performance.monthly} comparison={comparison} comparisonPeriod={`${performance.previousStart} 至 ${performance.previousEnd}`} onSelect={(start, end) => changeFilter({ period: 'custom', start, end })} />
         <div className="table-caption"><div><strong>各甲方汇总</strong><span>{rangeLabel}</span></div><span>{performance.total.recordCount} 条店铺日经营记录</span></div>
         <div className="table-scroll"><table><thead><tr><th>甲方</th><th>销售额</th><th>运营费用</th><th>甲方盈利</th><th>已发货退款</th><th>同期订单退款率</th><th>数据完整性</th></tr></thead><tbody>{performance.clients.map(client => { const ids = performance.stores.filter(store => store.clientId === client.id).map(store => store.id); return <tr key={client.id}><td className="cell-main">{client.name}</td><td>{money(client.sales)}</td><td className="performance-fee">{money(client.operationFee)}</td><td>{profitButton(client, client.name, ids)}</td><td className="negative">{money(client.shippedRefund)}</td><td>{percent(client.refundRate)}</td><td>{status(client, client.name, ids)}</td></tr> })}</tbody></table></div>
       </>}

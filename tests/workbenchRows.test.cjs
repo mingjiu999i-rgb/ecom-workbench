@@ -21,7 +21,7 @@ test('one SKU edit updates one row; repeat import is a no-op; delete/reorder rem
 test('duplicate business identities stop migration instead of discarding records, oversized records remain local', () => {
   const doc = h.fixture(); doc.orderAccountingLedgers[0].orders.push({ ...doc.orderAccountingLedgers[0].orders[0] })
   assert.throws(() => h.encodeWorkbenchRows(doc), /Duplicate/)
-  const changed = h.fixture(); changed.extension.raw = 'x'.repeat(300000)
+  const changed = h.fixture(); changed.extension.raw = 'x'.repeat(600000)
   assert.throws(() => h.chunkRowChanges(h.diffWorkbenchRows([], h.encodeWorkbenchRows(changed))), /exceeds/)
 })
 
