@@ -181,15 +181,15 @@ test('product preview updates effective sales when a confirmed refund is backfil
   assert.equal(preview.E9.v, currentProfit.operationFee * 2)
   assert.equal(preview.D10.v, currentProfit.quantity)
   assert.equal(preview.E10.v, currentProfit.quantity * 2)
-  assert.equal(preview.E7.v, '')
-  assert.equal(preview.E11.v, '')
+  assert.equal(preview.E7.v, 140)
+  assert.equal(preview.E11.v, preview.E7.v - preview.E8.v - preview.E9.v)
   assert.equal(preview.C11.v, 48)
   assert.equal(preview.C12.v, 0.48)
   assert.equal(preview.C13.v, 42)
   assert.equal(preview.C15.v, 6)
   assert.equal(preview.C16.v, 0.06)
-  assert.equal(preview.D11.v, '')
-  assert.equal(preview.E13.v, '')
+  assert.equal(preview.D11.v, preview.D7.v - preview.D8.v - preview.D9.v)
+  assert.equal(preview.E13.v, 84)
   assert(!Object.values(preview).some(cell => cell?.v === '待补齐'))
   assert.equal(preview.C14.v + preview.C13.v - preview.C5.v, 10) // Service fee, compensation and small payment.
   const later = next(result, { funds: [fund('refund-later', -10, 0, '0020002', 'refund')] })
@@ -209,7 +209,7 @@ test('product preview updates effective sales when a confirmed refund is backfil
   assert.equal(mixedDay.C9.v, currentProfit.operationFee * 2)
   assert.equal(mixedDay.C10.v, currentProfit.quantity * 2)
   assert.equal(mixedDay.C14.v, 136)
-  assert.equal(mixedDay.C13.v, '')
+  assert.equal(mixedDay.C13.v, 84)
 })
 
 test('product preview attributes deductions to their order product and rejects mismatched product totals', () => {
@@ -247,7 +247,7 @@ test('product preview attributes deductions to their order product and rejects m
   assert.equal(amountAt(untrusted, otherProduct.name, 1), '')
 })
 
-test('incomplete order index never presents its small subset as the full day', () => {
+test('single-product preview uses saved store days only when cost and promotion reconcile', () => {
   const result = initial()
   const collection = { ...records(result)[0], originalSales: 930, effectiveSales: 928 }
   const profit = { ...profitRecords(result)[0], amount: 927, cost: 700, promotion: 20, operationFee: 18, quantity: 40 }
@@ -266,6 +266,20 @@ test('incomplete order index never presents its small subset as the full day', (
   assert.equal(preview.C14.v, 927)
   for (const row of [7, 11, 12, 13, 15, 16]) assert.equal(preview[`C${row}`].v, '')
   assert.equal(createSettlementWorkbook(data, { clientId: 'client' }).Sheets['店铺回款'].D8.v, 930)
+  const reconciled = { ...data, collectionRecords: [{ ...collection, productCost: 700, promotionFee: 20, shippedRefund: 2 }] }
+  const filled = createSettlementWorkbook(reconciled, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(filled.C7.v, 230)
+  assert.equal(filled.C11.v, 192)
+  assert.equal(filled.C13.v, 2)
+  assert.equal(filled.C15.v, 190)
+  assert.equal(filled.D15.v, 190)
+  const proxy = createSettlementWorkbook({ ...reconciled, profitRecords: [{ ...profit, quantity: undefined }] }, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(proxy.C10.v, collection.orderCount)
+  assert.match(proxy.C10.s.numFmt, /\*/)
+  assert.equal(proxy.D10.v, collection.orderCount)
+  const largeDifference = createSettlementWorkbook({ ...reconciled, profitRecords: [{ ...profit, amount: 800 }] }, { clientId: 'client' }).Sheets['产品预览']
+  assert.equal(largeDifference.C7.v, '')
+  assert.equal(largeDifference.C13.v, '')
 })
 
 test('all clients export separate overview, product preview and store details with cross-store monthly totals', t => {
@@ -294,7 +308,7 @@ test('all clients export separate overview, product preview and store details wi
   assert.equal(preview.D5.v, 200)
   assert.equal(preview.C14.v, 200)
   assert.equal(preview.D14.v, 200)
-  assert.equal(preview.D7.v, '')
+  assert.equal(preview.D7.v, 140)
   assert.equal(workbook.Sheets['总览'].A12.v, '规格销量汇总')
   assert.equal(workbook.Sheets['总览'].A18.v, '销量待补明细')
   assert.equal(workbook.Sheets['总览']['!ref'], 'A1:M21') // Keep the production initial-profit column M.
