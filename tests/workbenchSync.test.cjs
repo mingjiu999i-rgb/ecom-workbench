@@ -231,6 +231,32 @@ test('PostgREST connection errors are transient while missing functions and vers
   assert.notEqual(describeSyncError({ code: '57014', message: 'statement timeout' }).reconnecting, true)
 })
 
+test('PT409, HTTP 409, and legacy 40001 stop automatic retries; lock contention and 504 remain transient', async () => {
+  const conflictMessage = describeSyncError({ code: '40001', message: 'Cloud data changed' }).message
+  for (const error of [
+    { code: 'PT409', status: 409, message: 'Cloud data changed' },
+    { code: '23505', status: 409, message: 'Cloud data changed' },
+    { code: '40001', message: 'Cloud data changed' },
+  ]) {
+    const failure = describeSyncError(error)
+    assert.equal(failure.message, conflictMessage)
+    assert.equal(failure.retryable, false)
+    let calls = 0
+    const { manager } = setup(async () => { calls++; throw error })
+    manager.enqueue({ value: 1 })
+    await until(() => manager.getState().status === 'error')
+    assert.equal(calls, 1)
+    assert.equal(manager.hasPending(), true)
+    manager.dispose()
+  }
+  const lock = describeSyncError({ code: '55P03', message: 'Lock not available' })
+  assert.equal(lock.retryable, true)
+  assert.notEqual(lock.reconnecting, true)
+  const timeout = describeSyncError({ status: 504, message: 'Gateway Timeout' })
+  assert.equal(timeout.retryable, true)
+  assert.equal(timeout.reconnecting, true)
+})
+
 test('schema-cache recovery uses exponential delays and saves only after acknowledgement', async context => {
   context.mock.timers.enable({ apis: ['setTimeout'] })
   let calls = 0
