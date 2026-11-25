@@ -54,6 +54,27 @@ test('progressive startup excludes history, preserves saved overview semantics a
   await assert.rejects(() => store.save(startup), /complete row baseline/)
 })
 
+test('full read accepts a collection larger than the JavaScript argument limit', async () => {
+  const count = 130000
+  const rows = h.encodeWorkbenchRows({ todos: Array.from({ length: count }, (_, i) => ({ id: `todo-${i}` })) })
+  const header = rows[0], items = rows.slice(1)
+  const store = h.createRowWorkbenchStore({
+    head: async () => ({ mode: 'rows', revision: '1' }),
+    page: async () => { throw new Error('Unexpected serial read') },
+    collections: async () => ['$array', 'a:todos'],
+    collectionPage: async (collection, after) => {
+      if (collection === '$array') return after ? [] : [header]
+      const offset = after ? Number(JSON.parse(after[2])[0].slice(5)) + 1 : 0
+      return items.slice(offset, offset + 500)
+    },
+    begin: async () => null, stage: async () => {}, commit: async () => '2',
+  })
+  const loaded = await store.load({ profile: 'full' })
+  assert.equal(loaded.todos.length, count)
+  assert.deepEqual(loaded.todos[0], { id: 'todo-0' })
+  assert.deepEqual(loaded.todos.at(-1), { id: `todo-${count - 1}` })
+})
+
 test('real isolated PostgreSQL: schema, role grants, row writes, atomic imports and migration gate', async t => {
   const db = await h.database(); t.after(() => db.close())
   const doc = h.fixture(); await h.seed(db, doc); await h.seed(db, { ...doc, todos: [{ id: 'other', title: 'private' }] }, h.OTHER)
