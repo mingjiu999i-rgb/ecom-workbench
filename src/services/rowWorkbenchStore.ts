@@ -45,7 +45,7 @@ async function readFullRows(transport: RowTransport, signal?: AbortSignal, concu
   const metadata = collections.includes(metadataCollection)
     ? await readPages(after => transport.collectionPage!(metadataCollection, after, signal), signal)
     : []
-  rows.push(...metadata)
+  for (const row of metadata) rows.push(row)
   const scopes = metadata.map(row => row.record_key), knownScopes = new Set(scopes)
   const ledgerCollections = new Set(['ledger.orders', 'ledger.refunds', 'ledger.funds', 'ledger.promotions'])
   async function readScope(collection: string, scope: string, first: boolean) {
@@ -84,7 +84,7 @@ async function readFullRows(transport: RowTransport, signal?: AbortSignal, concu
     for (;;) {
       const index = next++
       if (index >= jobs.length) return
-      rows.push(...await jobs[index]())
+      for (const row of await jobs[index]()) rows.push(row)
     }
   })
   await Promise.all(workers)
