@@ -144,17 +144,19 @@ function jsonbTextBytes(json: string, wireBytes: number) {
 
 export function chunkRowChanges(changes: RowChange[], maxRows = 200, maxBytes = 256 * 1024) {
   const chunks: RowChange[][] = [], encoder = new TextEncoder(), serverBytes = 512 * 1024
+  const singletonServerBytes = 2 * 1024 * 1024
   // Preserve explicit smaller caller limits. Ordinary chunks keep the 256 KiB
-  // target; a larger record travels alone only within the unchanged RPC limit.
-  const singletonBytes = maxBytes === 256 * 1024 ? serverBytes : Math.min(maxBytes, serverBytes)
+  // target; a larger record travels alone within the bounded singleton RPC limit.
+  const singletonWireBytes = maxBytes === 256 * 1024 ? singletonServerBytes : Math.min(maxBytes, serverBytes)
+  const singletonStageBytes = maxBytes === 256 * 1024 ? singletonServerBytes : serverBytes
   let chunk: RowChange[] = [], wireSize = 2, stageSize = 2
   const flush = () => { if (chunk.length) chunks.push(chunk); chunk = []; wireSize = 2; stageSize = 2 }
   for (const change of changes) {
     const json = JSON.stringify(change), wire = encoder.encode(json).byteLength, stage = jsonbTextBytes(json, wire)
-    if (wire + 2 > singletonBytes || stage + 2 > serverBytes) {
+    if (wire + 2 > singletonWireBytes || stage + 2 > singletonStageBytes) {
       throw new Error(`A stored record exceeds the batch limit (${change.collection}, ${stage + 2} JSONB bytes); local backup retained`)
     }
-    if (wire + 2 > maxBytes) { flush(); chunks.push([change]); continue }
+    if (wire + 2 > maxBytes || stage + 2 > serverBytes) { flush(); chunks.push([change]); continue }
     if (chunk.length && (chunk.length >= maxRows || wireSize + 1 + wire > maxBytes || stageSize + 2 + stage > serverBytes)) flush()
     wireSize += wire + (chunk.length ? 1 : 0)
     stageSize += stage + (chunk.length ? 2 : 0)

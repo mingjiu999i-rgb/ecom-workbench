@@ -1,6 +1,7 @@
 const { test } = require('node:test'), assert = require('node:assert/strict')
 const h = require('./rowHarness.cjs')
 const LIMIT = 512 * 1024
+const SINGLETON_LIMIT = 2 * 1024 * 1024
 const change = raw => ({ collection: '$value', scope: '', record_key: 'extension', row: {
   collection: '$value', scope: '', record_key: 'extension', position: 0, body: { raw },
   store_id: null, client_id: null, business_date: null,
@@ -17,30 +18,42 @@ test('ordinary chunks retain 200 rows/256 KiB; larger supported records travel a
     assert(Buffer.byteLength(JSON.stringify(chunk)) <= 256 * 1024)
   }
   assert.throws(() => h.chunkRowChanges([change('x'.repeat(1000))], 200, 500), /exceeds/)
-  assert.throws(() => h.chunkRowChanges([change('x'.repeat(LIMIT))]), /exceeds/)
+  const observation = change('x'.repeat(533 * 1024))
+  observation.record_key = observation.row.record_key = 'overviewRefundActivity'
+  assert.deepEqual(h.chunkRowChanges([observation]), [[observation]])
 })
 
-test('PostgreSQL measures exact singleton boundary, Unicode, escapes and exponential numeric expansion', async t => {
+test('PostgreSQL measures exact 2 MiB singleton boundary, Unicode, escapes and exponential numeric expansion', async t => {
   const db = await h.database(); t.after(() => db.close())
   await h.seed(db, h.fixture()); const a = h.transport(db)
   const stageBytes = async changes => Number((await db.query('select octet_length($1::jsonb::text) as bytes', [JSON.stringify(changes)])).rows[0].bytes)
-  const base = change(''), padding = LIMIT - await stageBytes([base]), exact = change('x'.repeat(padding))
-  assert.equal(await stageBytes([exact]), LIMIT)
-  assert.deepEqual(h.chunkRowChanges([exact]), [[exact]])
+  const base = change(''), oldPadding = LIMIT - await stageBytes([base]), oldExact = change('x'.repeat(oldPadding))
+  assert.equal(await stageBytes([oldExact]), LIMIT)
   const id = crypto.randomUUID()
-  await a.begin({ id, revision: '0', fingerprint: 'a'.repeat(64), count: 1 }); await a.stage(id, 0, [exact])
+  await a.begin({ id, revision: '0', fingerprint: 'a'.repeat(64), count: 1 }); await a.stage(id, 0, [oldExact])
+  const padding = SINGLETON_LIMIT - await stageBytes([base]), exact = change('x'.repeat(padding))
+  assert.equal(await stageBytes([exact]), SINGLETON_LIMIT)
+  assert.deepEqual(h.chunkRowChanges([exact]), [[exact]])
   assert.throws(() => h.chunkRowChanges([change('x'.repeat(padding + 1))]), /exceeds/)
   for (const raw of ['中:,"\\\n'.repeat(30000), 'text \\"1e+300,:' .repeat(20000)]) {
     const chunks = h.chunkRowChanges([change(raw)])
-    assert(await stageBytes(chunks[0]) <= LIMIT)
+    assert(await stageBytes(chunks[0]) <= SINGLETON_LIMIT)
   }
   const numeric = change('x'.repeat(270000)); numeric.row.body.numbers = Array(1000).fill(1e300)
   assert(Buffer.byteLength(JSON.stringify([numeric])) < LIMIT)
   assert(await stageBytes([numeric]) > LIMIT)
-  assert.throws(() => h.chunkRowChanges([numeric]), /exceeds/)
+  assert.deepEqual(h.chunkRowChanges([numeric]), [[numeric]])
   const compactNumeric = change(''); compactNumeric.row.body.numbers = Array(1800).fill(1e300)
   assert(Buffer.byteLength(JSON.stringify([compactNumeric])) < 256 * 1024)
-  assert.throws(() => h.chunkRowChanges([compactNumeric]), /exceeds/)
+  assert(await stageBytes([compactNumeric]) > LIMIT)
+  assert.deepEqual(h.chunkRowChanges([compactNumeric]), [[compactNumeric]])
+  const many = Array.from({ length: 405 }, (_, i) => ({ ...change('x'.repeat(2000)), record_key: String(i) }))
+  for (const chunk of h.chunkRowChanges(many)) {
+    if (chunk.length > 1) {
+      assert(Buffer.byteLength(JSON.stringify(chunk)) <= 256 * 1024)
+      assert(await stageBytes(chunk) <= LIMIT)
+    }
+  }
 })
 
 test('large observation plus ordinary edits remains atomic through an interrupted stage and receipt retry', async t => {
