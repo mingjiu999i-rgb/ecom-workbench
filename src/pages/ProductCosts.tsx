@@ -19,7 +19,7 @@ type PreviewRow = CostImportRow & {
 }
 
 export function ProductCosts() {
-  const { data, update } = useWorkbench()
+  const { data, updateAsync, hydratingForWrite } = useWorkbench()
   const [params] = useSearchParams()
   const returnTo = params.get('returnTo') || ''
   const [clientId, setClientId] = useState(params.get('client') || '')
@@ -59,8 +59,9 @@ export function ProductCosts() {
   const createCount = previewRows.filter(row => !row.error && row.action === '新增').length
   const updateCount = previewRows.filter(row => !row.error && row.action === '更新').length
 
-  const save = (item: ProductCost) => {
-    update(current => ({
+  const save = async (item: ProductCost) => {
+    if (hydratingForWrite) return
+    const ok = await updateAsync(current => ({
       ...current,
       productCosts: item.id
         ? current.productCosts.map(row => row.id === item.id ? item : row)
@@ -76,16 +77,17 @@ export function ProductCosts() {
         breakEvenRoi: calculatedBreakEvenRoi(sku.salePrice, item.totalCost),
       } : sku) : current.skus,
     }))
-    setEditing(null)
+    if (ok) setEditing(null)
   }
 
-  const remove = (item: ProductCost) => {
+  const remove = async (item: ProductCost) => {
+    if (hydratingForWrite) return
     if (data.skus.some(sku => sku.productCostId === item.id)) {
       window.alert('该成本 SKU 已被商品 SKU 使用，请先删除或更换关联后再删除。')
       return
     }
     if (!window.confirm(`确定删除 SKU“${item.skuCode}”的成本资料吗？`)) return
-    update(current => ({ ...current, productCosts: current.productCosts.filter(row => row.id !== item.id) }))
+    await updateAsync(current => ({ ...current, productCosts: current.productCosts.filter(row => row.id !== item.id) }))
   }
 
   const closeBatch = () => {
@@ -124,10 +126,10 @@ export function ProductCosts() {
     URL.revokeObjectURL(url)
   }
 
-  const saveBatch = () => {
-    if (!previewRows.length || invalidImportCount) return
+  const saveBatch = async () => {
+    if (!previewRows.length || invalidImportCount || hydratingForWrite) return
     setImporting(true)
-    update(current => {
+    const ok = await updateAsync(current => {
       const clients = [...current.clients]
       const products = [...current.products]
       const productCosts = [...current.productCosts]
@@ -172,7 +174,8 @@ export function ProductCosts() {
       })
       return { ...current, clients, products, productCosts, skus }
     })
-    closeBatch()
+    setImporting(false)
+    if (ok) closeBatch()
   }
 
   return <div className="page">
@@ -191,8 +194,8 @@ export function ProductCosts() {
       </tbody></table></div>
       {!rows.length && <div className="empty"><strong>暂无产品成本</strong><span>点击右上角新增 SKU 成本资料</span></div>}
     </section>
-    {editing && <CostModal initial={editing} onClose={() => setEditing(null)} onSave={save} />}
-    {batchOpen && <Modal title="批量上传产品成本" wide onClose={closeBatch}>
+    {editing && <CostModal initial={editing} onClose={() => { if (!hydratingForWrite) setEditing(null) }} onSave={save} />}
+    {batchOpen && <Modal title="批量上传产品成本" wide onClose={() => { if (!hydratingForWrite) closeBatch() }}>
       <div className="batch-import modal-body cost-import">
         <div className="cost-import-intro"><div><strong>上传 Excel 或 CSV 文件</strong><span>首行必须包含：甲方、商品名称、编码、售卖规格、总成本</span></div><button className="text-button import-template" onClick={downloadTemplate}><Download size={14} />下载模板</button></div>
         <label className="cost-import-picker">
@@ -208,13 +211,13 @@ export function ProductCosts() {
           {invalidImportCount > 0 && <div className="form-error import-message">请修正文件中的 {invalidImportCount} 条错误后重新上传。</div>}
         </>}
       </div>
-      <div className="modal-actions"><button className="button ghost" onClick={closeBatch}>取消</button><button className="button primary" disabled={!previewRows.length || invalidImportCount > 0 || importing} onClick={saveBatch}>导入 {previewRows.length || ''} 条成本</button></div>
+      <div className="modal-actions"><button className="button ghost" disabled={hydratingForWrite} onClick={closeBatch}>取消</button><button className="button primary" disabled={!previewRows.length || invalidImportCount > 0 || importing || hydratingForWrite} onClick={() => void saveBatch()}>{hydratingForWrite ? '正在加载完整数据…' : `导入 ${previewRows.length || ''} 条成本`}</button></div>
     </Modal>}
   </div>
 }
 
-function CostModal({ initial, onClose, onSave }: { initial: ProductCost; onClose: () => void; onSave: (item: ProductCost) => void }) {
-  const { data } = useWorkbench()
+function CostModal({ initial, onClose, onSave }: { initial: ProductCost; onClose: () => void; onSave: (item: ProductCost) => Promise<void> }) {
+  const { data, hydratingForWrite } = useWorkbench()
   const [item, setItem] = useState(initial)
   const initialProduct = data.products.find(product => product.id === initial.productId)
   const [selectedClientId, setSelectedClientId] = useState(initialProduct?.clientId || data.clients[0]?.id || '')
@@ -228,6 +231,6 @@ function CostModal({ initial, onClose, onSave }: { initial: ProductCost; onClose
       <Field label="售卖规格" full><Input value={item.specification} onChange={event => setItem(current => ({ ...current, specification: event.target.value }))} placeholder="例如：2 件装 / 红色 XL" /></Field>
       <Field label="总成本" full><Input type="number" min="0" step="0.01" value={item.totalCost} onChange={event => setItem(current => ({ ...current, totalCost: event.target.value === '' ? 0 : Number(event.target.value) }))} /></Field>
     </div>
-    <div className="modal-actions"><button className="button ghost" onClick={onClose}>取消</button><button className="button primary" disabled={!valid} onClick={() => onSave({ ...item, skuCode: item.skuCode.trim(), specification: item.specification.trim() })}>保存</button></div>
+    <div className="modal-actions"><button className="button ghost" disabled={hydratingForWrite} onClick={onClose}>取消</button><button className="button primary" disabled={!valid || hydratingForWrite} onClick={() => void onSave({ ...item, skuCode: item.skuCode.trim(), specification: item.specification.trim() })}>{hydratingForWrite ? '正在加载完整数据…' : '保存'}</button></div>
   </Modal>
 }

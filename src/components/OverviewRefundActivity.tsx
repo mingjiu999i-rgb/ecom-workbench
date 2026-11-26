@@ -29,11 +29,11 @@ export function OverviewRefundMetric({ storeIds, onViewOrder }: {
   start: string; end: string; storeIds: string[]
   onViewOrder: (storeId: string, orderDate: string) => void
 }) {
-  const { data } = useWorkbench()
+  const { data, complete } = useWorkbench()
   const [open, setOpen] = useState(false)
   const today = overviewDay(new Date().toISOString())
   const summary = useMemo(() => summarizeOverviewRefundTotals(data, today, new Set(storeIds)), [data, today, storeIds])
-  const pending = useMemo(() => summarizePendingRefundFunds(data, new Set(storeIds)), [data, storeIds])
+  const pending = useMemo(() => complete ? summarizePendingRefundFunds(data, new Set(storeIds)) : null, [complete, data, storeIds])
   const detailClients = useMemo(() => overviewRefundDetailClients(summary), [summary])
   useEffect(() => {
     if (!open) return
@@ -48,7 +48,7 @@ export function OverviewRefundMetric({ storeIds, onViewOrder }: {
         <button className="metric-amount" aria-label="查看今日新增退款店铺明细" onClick={() => setOpen(true)}>
           <strong>{summary.hasData ? money(summary.added) : '暂无记录'}</strong>
           <small>系统累计 {summary.hasData ? money(summary.after) : '暂无记录'}</small>
-          <small>{pending.amount > 0 ? `退款资金待核对 ${money(pending.amount)} · 查看店铺明细` : '查看店铺明细'}</small>
+          <small>{!complete ? '退款资金待核对：未加载' : pending && pending.amount > 0 ? `退款资金待核对 ${money(pending.amount)} · 查看店铺明细` : '查看店铺明细'}</small>
         </button>
       </div>
     </article>
@@ -74,9 +74,9 @@ export function OverviewRefundMetric({ storeIds, onViewOrder }: {
         {!summary.hasData && <div className="overview-refund-empty">所选店铺暂无已保存的退款汇总。</div>}
         {summary.hasData && detailClients.length === 0 && <div className="overview-refund-empty">今日暂无新增或调减退款。</div>}
         <p>仅显示退款有变化或待核对的店铺。新增和调减按店铺分别合计；金额来自经营结算已保存的结果，尚未成功回填的退款不会被推算进来。</p>
-        <h3>当前退款资金待核对：{money(pending.amount)}</h3>
-        <p>这是账本中累计尚未完成原订单、售后或历史日期匹配的退款本金，不代表今日新增，也不计入上方已确认金额。已知未发货退款或退款未成功的资金不列入待核对。</p>
-        {pending.stores.length > 0 && <div className="table-scroll overview-refund-table"><table><thead><tr><th>店铺</th><th>缺原订单</th><th>缺售后记录</th><th>原日期资料待补齐</th><th>待核对合计</th></tr></thead><tbody>
+        <h3>当前退款资金待核对：{pending ? money(pending.amount) : '未加载 / 待核对'}</h3>
+        <p>{pending ? '这是账本中累计尚未完成原订单、售后或历史日期匹配的退款本金，不代表今日新增，也不计入上方已确认金额。已知未发货退款或退款未成功的资金不列入待核对。' : '完整账本尚未加载。进入经营结算并完成读取后可核对退款资金。'}</p>
+        {pending && pending.stores.length > 0 && <div className="table-scroll overview-refund-table"><table><thead><tr><th>店铺</th><th>缺原订单</th><th>缺售后记录</th><th>原日期资料待补齐</th><th>待核对合计</th></tr></thead><tbody>
           {pending.stores.map(store => <tr key={store.storeId}><td>{store.name}</td><td>{money(store.missingOrder)}</td><td>{money(store.missingAfterSale)}</td><td>{money(store.awaitingSource)}</td><td>{money(store.amount)}</td></tr>)}
         </tbody></table></div>}
       </div>

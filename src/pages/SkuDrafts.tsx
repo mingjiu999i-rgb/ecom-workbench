@@ -17,7 +17,7 @@ const target = (result: Result, row: DraftGridRow) => result.targetState === 're
   : !row.roiA.trim() ? '待填 A ROI' : !row.priceB.trim() ? '待填 B 售价' : '待完善输入'
 
 export function SkuDrafts() {
-  const { data, update, syncStatus } = useWorkbench()
+  const { data, updateAsync, syncStatus, hydratingForWrite } = useWorkbench()
   const saved = getSkuPlanningDrafts(data)
   const [edits, setEdits] = useState<Record<string, DraftGridRow>>(() => saved.length ? {} : Object.fromEntries(Array.from({ length: 5 }, () => { const row = blankDraftGridRow(createId('sku-plan')); return [row.id, row] })))
   const [productId, setProductId] = useState('')
@@ -51,12 +51,12 @@ export function SkuDrafts() {
     const additions = Array.from({ length: count }, () => blankDraftGridRow(createId('sku-plan'), productId))
     setEdits(current => ({ ...current, ...Object.fromEntries(additions.map(row => [row.id, row])) })); setQuery(''); setMessage(`已新增 ${count} 行，可直接填写或粘贴。`)
   }
-  const save = () => {
-    if (!pending.length) return
+  const save = async () => {
+    if (!pending.length || hydratingForWrite) return
     const latest = pending
     try {
-      update(current => saveDraftGrid(current, latest, new Date().toISOString()))
-      setEdits(current => Object.fromEntries(Object.entries(current).filter(([id]) => !latest.some(row => row.id === id))))
+      if (!await updateAsync(current => saveDraftGrid(current, latest, new Date().toISOString()))) return
+      setEdits(current => Object.fromEntries(Object.entries(current).filter(([id, row]) => !latest.some(savedRow => savedRow.id === id && JSON.stringify(savedRow) === JSON.stringify(row)))))
       setMessage(`已提交 ${latest.length} 行，云端状态请查看左侧同步提示。`)
     } catch (error) { setMessage(error instanceof Error ? error.message : '保存失败，修改仍保留在表格中。') }
   }
@@ -77,11 +77,11 @@ export function SkuDrafts() {
     const index = cells.findIndex(cell => cell.dataset.row === rowId)
     cells[index + (event.shiftKey ? -1 : 1)]?.focus()
   }
-  const deleteRows = (ids: Set<string>) => {
-    if (!ids.size) return
+  const deleteRows = async (ids: Set<string>) => {
+    if (!ids.size || hydratingForWrite) return
     const stored = saved.filter(row => ids.has(row.id))
     if (stored.length && !window.confirm(`确定删除 ${stored.length} 份已保存草稿吗？不会删除正式商品或成本。`)) return
-    if (stored.length) update(current => stored.reduce((next, row) => removeSkuPlanningDraft(next, row.id), current))
+    if (stored.length && !await updateAsync(current => stored.reduce((next, row) => removeSkuPlanningDraft(next, row.id), current))) return
     setEdits(current => Object.fromEntries(Object.entries(current).filter(([id]) => !ids.has(id))))
     setSelected(new Set()); setMessage('已移除所选草稿行。')
   }
@@ -94,7 +94,7 @@ export function SkuDrafts() {
   }
   const productLabel = (id: string) => { const product = data.products.find(row => row.id === id); return `${data.clients.find(row => row.id === product?.clientId)?.name || '未关联甲方'} · ${product?.name || '产品已移除'}${isProductArchived(product) ? '（已停用）' : ''}` }
   return <div className="page sku-drafts-page">
-    <div className="page-heading"><div><span className="eyebrow">批量定价与投产规划</span><h1>SKU 草稿</h1><p>像表格一样直接填、批量看，毛利和 ROI 随填随算，无需打开弹窗。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => addRows(1)}><Plus size={16} />新增行</button><button className="button primary" disabled={!dirty} onClick={save}><Save size={16} />保存全部{pending.length ? `（${pending.length}）` : ''}</button></div></div>
+    <div className="page-heading"><div><span className="eyebrow">批量定价与投产规划</span><h1>SKU 草稿</h1><p>像表格一样直接填、批量看，毛利和 ROI 随填随算，无需打开弹窗。</p></div><div className="heading-actions"><button className="button secondary" onClick={() => addRows(1)}><Plus size={16} />新增行</button><button className="button primary" disabled={!dirty || hydratingForWrite} onClick={() => void save()}><Save size={16} />{hydratingForWrite ? '正在加载完整数据…' : `保存全部${pending.length ? `（${pending.length}）` : ''}`}</button></div></div>
     <section className="draft-grid-toolbar panel">
       <div className="draft-grid-tools"><label>新增行所属产品<Select aria-label="新增行所属产品" value={productId} onChange={event => { const id = event.target.value; setProductId(id); setEdits(current => Object.fromEntries(Object.entries(current).map(([key, row]) => [key, isBlankDraftGridRow(row) ? { ...row, productId: id } : row]))) }}><option value="">请选择甲方 / 产品</option>{productOptions(data).map(row => <option key={row.id} value={row.id}>{productLabel(row.id)}</option>)}</Select></label><button className="button secondary" onClick={() => addRows(10)}><Plus size={15} />新增 10 行</button><button className="button secondary" onClick={matchCosts}><WandSparkles size={15} />匹配缺失成本</button><button className="button secondary" disabled={!selected.size || !productId} onClick={() => { setEdits(current => ({ ...current, ...Object.fromEntries(visible.filter(row => selected.has(row.id)).map(row => [row.id, row.productId === productId ? row : { ...row, productId, costId: '', cost: null }])) })); setMessage('已更新选中行的产品；变更产品的行请重新匹配成本。') }}>产品应用到选中行</button><button className="button secondary" disabled={!selected.size} onClick={() => deleteRows(selected)}><Trash2 size={15} />删除选中{selected.size ? `（${selected.size}）` : ''}</button><div className="search"><Search size={15} /><Input aria-label="搜索 SKU 草稿" placeholder="搜索 SKU / 产品 / 甲方" value={query} onChange={event => setQuery(event.target.value)} /></div></div>
       <p><Copy size={14} />先选产品，再从 SKU 列粘贴 Excel 多行。列顺序：<b>SKU / 规格 → 成本编码 → A 售价 → A 当前 ROI → B 售价</b>；成本编码可留空自动匹配，也可只粘贴 SKU 单列。单次最多 500 行。</p>

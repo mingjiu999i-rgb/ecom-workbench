@@ -14,7 +14,7 @@ const scrollKey = 'workbench-overview-scroll'
 type Dialog = { kind: 'profit' | 'issues' | 'refund'; label: string; storeIds: string[] }
 
 export function StorePerformance() {
-  const { data } = useWorkbench()
+  const { data, complete } = useWorkbench()
   const initial = usePerformanceBaselines()
   const chartData = useMemo(() => ({ ...data, profitBaselines: initial.rows }), [data, initial.rows])
   const navigate = useNavigate(), location = useLocation()
@@ -62,7 +62,7 @@ export function StorePerformance() {
   }
   const show = (kind: Dialog['kind'], label: string, ids = allIds) => setDialog({ kind, label, storeIds: ids })
   const status = (summary: PerformanceSummary, label: string, ids: string[]) => summary.hasData
-    ? <button className={`performance-status ${summary.partial ? 'partial' : 'complete'}`} onClick={() => show('issues', label, ids)}>{summary.partial ? `部分汇总 · ${summary.affectedDays} 个店铺日待处理` : '已保存数据完整'}</button>
+    ? <button className={`performance-status ${summary.partial ? 'partial' : 'complete'}`} onClick={() => show('issues', label, ids)}>{summary.partial ? `部分汇总 · ${summary.affectedDays} 个店铺日待处理` : complete ? '已保存汇总完整' : '已保存汇总完整 · 账本未加载'}</button>
     : <span className="cell-sub">暂无数据</span>
   const profitButton = (summary: PerformanceSummary, label: string, ids: string[]) => <button className={`amount-button ${summary.profit != null && summary.profit < 0 ? 'negative' : 'positive'}`} aria-label={`查看${label}盈利构成`} disabled={!summary.hasData} onClick={() => show('profit', label, ids)}>{money(summary.profit)}</button>
   const metrics = [['销售额', performance.total.sales, CircleDollarSign, 'blue'], ['运营费用', performance.total.operationFee, BadgePercent, 'violet'], ['甲方盈利', performance.total.profit, TrendingUp, 'green'], ['已发货退款', performance.total.shippedRefund, RotateCcw, 'red']] as const
