@@ -25,6 +25,19 @@ test('duplicate business identities stop migration instead of discarding records
   assert.throws(() => h.chunkRowChanges(h.diffWorkbenchRows([], h.encodeWorkbenchRows(changed))), /exceeds/)
 })
 
+test('linear decode validation rejects duplicate, orphan, missing and inconsistent rows', () => {
+  const rows = h.encodeWorkbenchRows(h.fixture())
+  assert.throws(() => h.decodeWorkbenchRows([...rows, rows[0]]), /Duplicate row/)
+  assert.throws(() => h.decodeWorkbenchRows([...rows, { ...rows.find(row => row.collection === 'a:skus'), collection: 'a:orphan' }]), /Incomplete/)
+  const sku = rows.findIndex(row => row.collection === 'a:skus')
+  const invalidPosition = rows.map((row, index) => index === sku ? { ...row, position: -1 } : row)
+  assert.throws(() => h.decodeWorkbenchRows(invalidPosition), /invalid array positions/)
+  const missingIdentity = rows.map((row, index) => index === sku ? { ...row, body: { ...row.body, id: undefined } } : row)
+  assert.throws(() => h.decodeWorkbenchRows(missingIdentity), /Missing stored identity/)
+  const alteredMetadata = rows.map((row, index) => index === sku ? { ...row, store_id: 'wrong' } : row)
+  assert.throws(() => h.decodeWorkbenchRows(alteredMetadata), /Incomplete/)
+})
+
 test('progressive startup excludes history, preserves saved overview semantics and cannot be used as a write baseline', async () => {
   const doc = h.fixture()
   doc.profitRecords = [{ id: 'profit', storeId: 's', amount: 12.345 }]
@@ -141,14 +154,14 @@ test('real isolated PostgreSQL: schema, role grants, row writes, atomic imports 
     await assert.rejects(() => bad.load(), e => e.code === '40001')
   })
   await t.test('explicit rows-v1 service routing uses authenticated row RPCs and existing load normalization, with no legacy fallback', async () => {
-    const fs=require('node:fs'),ts=require('typescript'),calls=[]
+    const fs=require('node:fs'),ts=require('typescript'),calls=[],pageArgs=[]
     const client={from:()=>{throw Error('legacy access forbidden')},rpc:(name,args)=>{
       calls.push(name)
       const run=async()=>{
         if(name==='read_workbench_rows_head')return {...await a.head(),user_id:h.OWNER}
         if(name==='read_workbench_rows_page')return a.page(args.p_after)
         if(name==='read_workbench_row_collections')return a.collections()
-        if(name==='read_workbench_rows_collection_page')return a.collectionPage(args.p_collection,args.p_after)
+        if(name==='read_workbench_rows_collection_page'){pageArgs.push(args);return a.collectionPage(args.p_collection,args.p_after)}
         if(name==='read_workbench_rows_startup_page')return a.startupPage(args.p_after)
         if(name==='begin_workbench_rows')return {revision:await a.begin({id:args.p_request_id,revision:args.p_expected_revision,fingerprint:args.p_fingerprint,count:args.p_operation_count})}
         if(name==='stage_workbench_rows')return a.stage(args.p_request_id,args.p_offset,args.p_changes)
@@ -161,6 +174,7 @@ test('real isolated PostgreSQL: schema, role grants, row writes, atomic imports 
     const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,result={exports:{}}
     new Function('require','module','exports',compiled)(name=>name==='@supabase/supabase-js'?{createClient:()=>client}:name==='../data/template'?{initialData:h.fixture()}:name==='./rowWorkbenchStore'?require('../src/services/rowWorkbenchStore.ts'):name.startsWith('../utils/')?require('../src/utils/'+name.slice(9)+'.ts'):require(name),result,result.exports)
     const snapshot=await result.exports.loadWorkbenchSnapshot(h.OWNER)
+    assert(pageArgs.length > 0 && pageArgs.every(args => args.p_limit === 2000 && args.p_max_bytes === 1048576))
     assert.equal(snapshot.data.stores[0].storeStatus,'启用')
     const next=h.json(snapshot.storedData);next.todos.push({id:'routed',title:'routed'})
     await result.exports.saveWorkbench(h.OWNER,next)

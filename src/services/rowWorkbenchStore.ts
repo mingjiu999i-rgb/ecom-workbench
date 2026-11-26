@@ -245,7 +245,7 @@ export function supabaseRowTransport(client: SupabaseClient, userId: string): Ro
       if (!Array.isArray(data) || data.some(value => typeof value !== 'string')) throw new Error('Invalid cloud collection list')
       return data
     },
-    async collectionPage(collection, after, signal) { return mapRows(await rpc('read_workbench_rows_collection_page', { p_collection: collection, p_after: after, p_limit: 500, p_max_bytes: 262144 }, signal)) },
+    async collectionPage(collection, after, signal) { return mapRows(await rpc('read_workbench_rows_collection_page', { p_collection: collection, p_after: after, p_limit: 2000, p_max_bytes: 1048576 }, signal)) },
     async begin(request, signal) { const data = await rpc('begin_workbench_rows', { p_request_id: request.id, p_expected_revision: request.revision, p_fingerprint: request.fingerprint, p_operation_count: request.count }, signal); return data?.revision },
     async stage(id, offset, changes, signal) { await rpc('stage_workbench_rows', { p_request_id: id, p_offset: offset, p_changes: changes }, signal) },
     async commit(id, signal) { return (await rpc('commit_workbench_rows', { p_request_id: id }, signal))?.revision },

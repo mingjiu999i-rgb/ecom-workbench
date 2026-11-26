@@ -67,11 +67,11 @@ export function encodeWorkbenchRows(document: object): StoredRow[] {
 }
 
 export function decodeWorkbenchRows(rows: StoredRow[]): Record<string, unknown> {
-  const result: Record<string, unknown> = Object.create(null), identities = new Set<string>(), groups = new Map<string, StoredRow[]>()
+  const result: Record<string, unknown> = Object.create(null), identities = new Map<string, StoredRow>(), groups = new Map<string, StoredRow[]>()
   for (const row of rows) {
     const identity = storedRowIdentity(row)
     if (identities.has(identity)) throw new Error('Duplicate row in storage response')
-    identities.add(identity)
+    identities.set(identity, row)
     const group = key(row.collection, row.scope), list = groups.get(group) || []
     list.push(row); groups.set(group, list)
   }
@@ -91,10 +91,14 @@ export function decodeWorkbenchRows(rows: StoredRow[]): Record<string, unknown> 
     })
   }
   // Reject orphaned/unrecognized records instead of silently dropping them.
-  if (!sameStoredDocument(encodeWorkbenchRows(result).sort(compare), [...rows].sort(compare))) throw new Error('Incomplete or incompatible stored document')
+  const reconstructed = encodeWorkbenchRows(result)
+  if (reconstructed.length !== rows.length ||
+      reconstructed.some(row => {
+        const stored = identities.get(storedRowIdentity(row))
+        return !stored || !sameStoredDocument(row, stored)
+      })) throw new Error('Incomplete or incompatible stored document')
   return result
 }
-const compare = (a: StoredRow, b: StoredRow) => storedRowIdentity(a).localeCompare(storedRowIdentity(b))
 export function diffWorkbenchRows(before: StoredRow[], after: StoredRow[]): RowChange[] {
   const previous = new Map(before.map(row => [storedRowIdentity(row), row])), changes: RowChange[] = []
   for (const row of after) {
