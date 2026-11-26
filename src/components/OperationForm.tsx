@@ -17,7 +17,7 @@ const currentValue = (sku: Sku | undefined, type: AdjustmentType) => {
 }
 
 export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: string; onDone: () => void }) {
-  const { data, update } = useWorkbench()
+  const { data, updateAsync, hydratingForWrite } = useWorkbench()
   const first = data.skus.find(s => s.id === initialSkuId)
   const firstLink = data.productLinks.find(l => l.id === first?.productLinkId)
   const [productIdInput, setProductIdInput] = useState(firstLink?.linkId ?? '')
@@ -68,10 +68,10 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
     else { setClientId(''); setStoreId(''); setProductId(''); setLinkId(''); setSkuId(''); setBefore('') }
   }
 
-  const save = () => {
-    if (!valid) return
+  const save = async () => {
+    if (!valid || hydratingForWrite) return
     const operation: Operation = { id: createId('op'), createdAt: new Date(createdAt).toISOString(), clientId, storeId, productId, productLinkId: linkId, skuId, type, before, after, reason, remark }
-    update(current => {
+    const ok = await updateAsync(current => {
       const beforeSku = current.skus.find(sku => sku.id === skuId)
       const afterSku = beforeSku ? syncSku(beforeSku, type, after) : undefined
       return { ...current,
@@ -80,7 +80,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
         skuHistory: afterSku ? appendSkuHistory(current.skuHistory, beforeSku, afterSku) : current.skuHistory,
       }
     })
-    onDone()
+    if (ok) onDone()
   }
 
   return <><div className="form-grid operation-form">
@@ -96,7 +96,7 @@ export function OperationForm({ initialSkuId = '', onDone }: { initialSkuId?: st
     <Field label="调整原因"><Select value={reason} onChange={e => setReason(e.target.value as AdjustmentReason)}>{reasons.map(x => <option key={x}>{x}</option>)}</Select></Field>
     <Field label="时间"><Input type="datetime-local" value={createdAt} onChange={e => setCreatedAt(e.target.value)} /></Field>
     <Field label="备注" full><Textarea value={remark} onChange={e => setRemark(e.target.value)} placeholder="可选" /></Field>
-  </div><div className="modal-actions"><button className="button ghost" onClick={onDone}>取消</button><button className="button primary" disabled={!valid} onClick={save}>保存调整</button></div></>
+  </div><div className="modal-actions"><button className="button ghost" disabled={hydratingForWrite} onClick={onDone}>取消</button><button className="button primary" disabled={!valid || hydratingForWrite} onClick={() => void save()}>{hydratingForWrite ? '正在加载完整数据…' : '保存调整'}</button></div></>
 }
 
 function syncSku(sku: Sku, type: AdjustmentType, value: string): Sku {

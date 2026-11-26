@@ -16,7 +16,7 @@ const emptySku = (productLinkId = ''): Sku => ({ id: '', productLinkId, productC
 const activities: ActivityType[] = ['无活动', '平台活动', '店铺活动', '百亿补贴', '其他']
 
 export function Products() {
-  const { data, update } = useWorkbench()
+  const { data, updateAsync, hydratingForWrite } = useWorkbench()
   const [params] = useSearchParams()
   const [clientId, setClientId] = useState(params.get('client') ?? '')
   const [storeId, setStoreId] = useState('')
@@ -58,13 +58,13 @@ export function Products() {
         </tr> })}</tbody></table></div>
       {!rows.length && <div className="empty"><strong>没有符合条件的 SKU</strong><span>调整筛选条件或新增一条 SKU</span></div>}
     </section>
-    {editing && <SkuDrawer sku={editing} onClose={() => setEditing(null)} onAdjust={id => { setEditing(null); setOperationSkuId(id) }} onSave={saved => { update(current => { const before = current.skus.find(x => x.id === saved.id); const normalized = { ...saved, finalPrice: saved.salePrice, breakEvenRoi: calculatedBreakEvenRoi(saved.salePrice, totalCost(saved)), activityPrice: saved.activity === '无活动' ? 0 : saved.activityPrice }; const item = normalized.id ? normalized : { ...normalized, id: createId('sku') }; return { ...current, skus: saved.id ? current.skus.map(x => x.id === saved.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item), operations: [...createSkuChangeOperations(current, before, item, '商品管理直接修改'), ...current.operations] } }); setEditing(null) }} />}
-    {operationSkuId && <Modal title="新增调整" onClose={() => setOperationSkuId(null)} wide><OperationForm initialSkuId={operationSkuId} onDone={() => setOperationSkuId(null)} /></Modal>}
+    {editing && <SkuDrawer sku={editing} onClose={() => { if (!hydratingForWrite) setEditing(null) }} onAdjust={id => { if (!hydratingForWrite) { setEditing(null); setOperationSkuId(id) } }} onSave={async saved => { const ok = await updateAsync(current => { const before = current.skus.find(x => x.id === saved.id); const normalized = { ...saved, finalPrice: saved.salePrice, breakEvenRoi: calculatedBreakEvenRoi(saved.salePrice, totalCost(saved)), activityPrice: saved.activity === '无活动' ? 0 : saved.activityPrice }; const item = normalized.id ? normalized : { ...normalized, id: createId('sku') }; return { ...current, skus: saved.id ? current.skus.map(x => x.id === saved.id ? item : x) : [...current.skus, item], skuHistory: appendSkuHistory(current.skuHistory, before, item), operations: [...createSkuChangeOperations(current, before, item, '商品管理直接修改'), ...current.operations] } }); if (ok) setEditing(null) }} />}
+    {operationSkuId && <Modal title="新增调整" onClose={() => { if (!hydratingForWrite) setOperationSkuId(null) }} wide><OperationForm initialSkuId={operationSkuId} onDone={() => setOperationSkuId(null)} /></Modal>}
   </div>
 }
 
-function SkuDrawer({ sku: initial, onClose, onSave, onAdjust }: { sku: Sku; onClose: () => void; onSave: (sku: Sku) => void; onAdjust: (id: string) => void }) {
-  const { data } = useWorkbench()
+function SkuDrawer({ sku: initial, onClose, onSave, onAdjust }: { sku: Sku; onClose: () => void; onSave: (sku: Sku) => Promise<void>; onAdjust: (id: string) => void }) {
+  const { data, hydratingForWrite } = useWorkbench()
   const [sku, setSku] = useState(initial)
   const set = <K extends keyof Sku>(key: K, value: Sku[K]) => setSku(current => ({ ...current, [key]: value }))
   const number = (key: keyof Sku, value: string) => set(key, (value === '' ? 0 : Number(value)) as never)
@@ -83,6 +83,6 @@ function SkuDrawer({ sku: initial, onClose, onSave, onAdjust }: { sku: Sku; onCl
         {([['salePrice','售价'],['productCost','商品成本'],['shippingCost','快递'],['packagingCost','包装'],['otherCost','其他成本']] as const).map(([key,label]) => <Field key={key} label={label}><Input type="number" min="0" step="0.01" value={sku[key]} onChange={e => number(key, e.target.value)} /></Field>)}
       </div><div className="profit-strip"><div><span>总成本</span><strong>{money(totalCost(sku))}</strong></div><div><span>毛利</span><strong>{money(grossProfit(sku))}</strong></div><div><span>毛利率</span><strong>{percent(grossMargin(sku))}</strong></div></div></section>
       {!isNew && <section className="form-section"><h3>曾用名称与价格</h3>{data.skuHistory.filter(item => item.skuId === sku.id).length ? <div className="sku-history-list">{data.skuHistory.filter(item => item.skuId === sku.id).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt)).map(item => <div key={item.id}><span>{new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short' }).format(new Date(item.recordedAt))}</span><strong>{item.name}</strong><b>{money(item.salePrice)}</b></div>)}</div> : <p className="form-hint">修改名称或售价后，旧值会自动记录在这里。</p>}</section>}
-    </div><div className="drawer-actions">{!isNew && <button className="button secondary" onClick={() => onAdjust(sku.id)}>新增调整</button>}<button className="button primary" disabled={!valid} onClick={() => onSave(sku)}>保存</button></div>
+    </div><div className="drawer-actions">{!isNew && <button className="button secondary" disabled={hydratingForWrite} onClick={() => onAdjust(sku.id)}>新增调整</button>}<button className="button primary" disabled={!valid || hydratingForWrite} onClick={() => void onSave(sku)}>{hydratingForWrite ? '正在加载完整数据…' : '保存'}</button></div>
   </Drawer>
 }

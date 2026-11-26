@@ -3,7 +3,7 @@ import { downloadWorkbenchBackup, useWorkbench } from '../store/workbench'
 import './sync-notice.css'
 
 export function SyncNotice() {
-  const { data, syncStatus, syncSession, syncError, syncErrorDetail, backupError, cleanupError, retrySync, openSyncReview, reviewBusy, reviewIssue } = useWorkbench()
+  const { data, complete, syncStatus, syncSession, syncError, syncErrorDetail, backupError, cleanupError, retrySync, openSyncReview, reviewBusy, reviewIssue } = useWorkbench()
   if (!syncError && syncStatus !== 'error' && !cleanupError && !backupError && !reviewIssue) return null
   const localOnly = syncStatus === 'saved' && !syncError
   const frozen = ['conflict', 'capacity', 'unconfirmed'].includes(syncSession)
@@ -14,7 +14,7 @@ export function SyncNotice() {
       {reviewIssue && <p role="alert">{reviewIssue}</p>}
       {syncErrorDetail && <details><summary>查看错误详情</summary><pre>{syncErrorDetail}</pre></details>}
     </div>
-    <div className="sync-notice-actions"><button className="button secondary" onClick={() => downloadWorkbenchBackup(data)}><Download size={14} />{localOnly ? '导出当前数据备份' : '导出未同步备份'}</button>
+    <div className="sync-notice-actions"><button className="button secondary" disabled={!complete} title={!complete ? '需加载完整数据后才能导出完整备份' : undefined} onClick={() => { if (complete) downloadWorkbenchBackup(data) }}><Download size={14} />{complete ? localOnly ? '导出当前数据备份' : '导出未同步备份' : '需加载完整数据后导出备份'}</button>
       {frozen && <button className="button secondary" disabled={reviewBusy} onClick={openSyncReview}>{reviewBusy ? '正在只读核对…' : '读取云端核对'}</button>}
       {(!localOnly || cleanupError) && !['conflict', 'capacity'].includes(syncSession) && <button className="button secondary" disabled={syncStatus === 'saving'} onClick={retrySync}><RefreshCw size={14} />{localOnly ? '重试清理本机备份' : syncSession === 'unconfirmed' ? '重试同一请求' : '重试同步'}</button>}</div>
   </section>

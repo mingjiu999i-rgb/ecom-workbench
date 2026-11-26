@@ -13,6 +13,10 @@ type SyncStatus = 'saved' | 'saving' | 'error'
 interface WorkbenchContextValue {
   data: WorkbenchData
   update: (recipe: (current: WorkbenchData) => WorkbenchData) => void
+  updateAsync: (recipe: (current: WorkbenchData) => WorkbenchData) => Promise<boolean>
+  hydratingForWrite: boolean
+  writeHydrationError: string
+  writeHydrationPages: number
   userEmail: string
   signOut: () => Promise<void>
   syncStatus: SyncStatus
@@ -47,6 +51,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [resolving, setResolving] = useState(false)
   const [complete, setComplete] = useState(true)
   const [fullLoadError, setFullLoadError] = useState('')
+  const [hydratingForWrite, setHydratingForWrite] = useState(false)
+  const [writeHydrationError, setWriteHydrationError] = useState('')
+  const [writeHydrationPages, setWriteHydrationPages] = useState(0)
   const [loadedOwner, setLoadedOwner] = useState('')
   const [cloudLoading, setCloudLoading] = useState(false)
   const [loadDetail, setLoadDetail] = useState('')
@@ -54,6 +61,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [loadAttempt, setLoadAttempt] = useState(0)
   const completeRef = useRef(true)
   const hydrateRef = useRef<Promise<boolean> | null>(null)
+  const writeBusyRef = useRef(false)
   const hydrateController = useRef<AbortController | null>(null)
   const reviewController = useRef<AbortController | null>(null)
   const ownerRef = useRef<string | undefined>(undefined)
@@ -73,6 +81,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     completeRef.current = false
     setComplete(false)
     setFullLoadError('')
+    setHydratingForWrite(false); setWriteHydrationError(''); setWriteHydrationPages(0); writeBusyRef.current = false
     hydrateRef.current = null
     hydrateController.current?.abort()
     hydrateController.current = null
@@ -161,7 +170,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     const online = () => manager.retry(false)
     const beforeUnload = (event: BeforeUnloadEvent) => {
       const state = manager.getState()
-      if (manager.hasPending() || state.backupError && ['conflict', 'unconfirmed'].includes(state.session)) {
+      if (writeBusyRef.current || manager.hasPending() || state.backupError && ['conflict', 'unconfirmed'].includes(state.session)) {
         event.preventDefault(); event.returnValue = ''
       }
     }
@@ -190,7 +199,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     hydrateController.current = controller
     setFullLoadError('')
     const budget = createWorkbenchReadBudget(controller)
-    const operation = loadWorkbenchSnapshot(userId, { signal: controller.signal, initialize: false, profile: 'full', onProgress: budget.progress }).then(snapshot => {
+    const operation = loadWorkbenchSnapshot(userId, { signal: controller.signal, initialize: false, profile: 'full', onProgress: progress => { budget.progress(); setWriteHydrationPages(progress.pages) } }).then(snapshot => {
       if (ownerRef.current !== userId) return false
       dataRef.current = snapshot.data
       setData(snapshot.data)
@@ -209,15 +218,37 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     return operation
   }, [userId])
 
-  const applyUpdate = useCallback((recipe: (current: WorkbenchData) => WorkbenchData) => {
+  const applyUpdate = useCallback((recipe: (current: WorkbenchData) => WorkbenchData): boolean => {
     const current = dataRef.current
-    if (!completeRef.current || ownerRef.current !== userId || !current || !syncRef.current) return
+    if (!completeRef.current || ownerRef.current !== userId || !current || !syncRef.current) return false
     const next = recipe(current)
-    if (next === current || sameStoredDocument(current, next)) return
+    if (next === current || sameStoredDocument(current, next)) return true
     dataRef.current = next
     setData(next)
     syncRef.current.enqueue(next)
+    return true
   }, [userId])
+
+  const updateAsync = useCallback(async (recipe: (current: WorkbenchData) => WorkbenchData): Promise<boolean> => {
+    if (writeBusyRef.current) return false
+    writeBusyRef.current = true
+    setWriteHydrationError('')
+    const needsHydration = !completeRef.current
+    if (needsHydration) { setHydratingForWrite(true); setWriteHydrationPages(0) }
+    try {
+      if (needsHydration && !await ensureFullData()) {
+        setWriteHydrationError('完整数据加载失败，表单内容已保留。请重试保存。')
+        return false
+      }
+      return applyUpdate(recipe)
+    } catch (error) {
+      setWriteHydrationError(error instanceof Error ? error.message : '修改未完成，请重试。')
+      return false
+    } finally {
+      writeBusyRef.current = false
+      setHydratingForWrite(false)
+    }
+  }, [applyUpdate, ensureFullData])
 
   const update = useCallback((recipe: (current: WorkbenchData) => WorkbenchData) => {
     if (completeRef.current) { applyUpdate(recipe); return }
@@ -346,6 +377,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const value: WorkbenchContextValue = {
     data,
     update,
+    updateAsync,
+    hydratingForWrite,
+    writeHydrationError,
+    writeHydrationPages,
     userEmail: session.user.email || '已登录',
     signOut: async () => { await supabase.auth.signOut() },
     syncStatus: syncState.status,

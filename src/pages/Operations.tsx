@@ -6,7 +6,7 @@ import { useWorkbench } from '../store/workbench'
 import { displayDate, getSkuContext } from '../utils/selectors'
 
 export function Operations() {
-  const { data } = useWorkbench()
+  const { data, hydratingForWrite } = useWorkbench()
   const [open, setOpen] = useState(false)
   const operations = data.operations.filter(operation => operation.type !== '到手价').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   return <div className="page page-wide">
@@ -17,6 +17,6 @@ export function Operations() {
       </tbody></table></div>
       {!operations.length && <div className="empty"><div className="empty-symbol">↗</div><strong>还没有调整记录</strong><span>点击右上角新增第一条调整</span><button className="button secondary" onClick={() => setOpen(true)}>新增调整</button></div>}
     </section>
-    {open && <Modal title="新增调整" onClose={() => setOpen(false)} wide><OperationForm onDone={() => setOpen(false)} /></Modal>}
+    {open && <Modal title="新增调整" onClose={() => { if (!hydratingForWrite) setOpen(false) }} wide><OperationForm onDone={() => setOpen(false)} /></Modal>}
   </div>
 }

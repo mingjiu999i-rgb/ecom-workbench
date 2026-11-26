@@ -26,8 +26,8 @@ async function harness({draft=true,delay=45000,error=null,different=false,progre
   })},
  })
  context.window.addEventListener=(name,fn)=>handlers.set(name,fn)
- for(const name of ['ownerRef','completeRef','hydrateRef','hydrateController','reviewController','dataRef','syncRef','loadController'])context[name]={current:null}
- for(const name of ['Complete','FullLoadError','Data','Recovery','LoadedOwner','CloudLoading','LoadDetail','LoadPages','Differences','RecoveryIssue','Resolving','LoadError','SyncState','SyncReview','ReviewBusy','ReviewIssue'])context['set'+name]=value=>{state[name]=value}
+ for(const name of ['ownerRef','completeRef','hydrateRef','hydrateController','reviewController','dataRef','syncRef','loadController','writeBusyRef'])context[name]={current:null}
+ for(const name of ['Complete','FullLoadError','HydratingForWrite','WriteHydrationError','WriteHydrationPages','Data','Recovery','LoadedOwner','CloudLoading','LoadDetail','LoadPages','Differences','RecoveryIssue','Resolving','LoadError','SyncState','SyncReview','ReviewBusy','ReviewIssue'])context['set'+name]=value=>{state[name]=value}
  context.exports={}
  vm.createContext(context)
  vm.runInContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/utils/workbenchReadBudget.ts'),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,context)
