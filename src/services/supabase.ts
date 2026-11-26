@@ -4,7 +4,7 @@ import type { WorkbenchData } from '../types/models'
 import { normalizeCollectionRefunds } from '../utils/collectionRefunds'
 import { buildWorkbenchPatch } from '../utils/workbenchPatch'
 import { buildWorkbenchDelta } from '../utils/workbenchDelta'
-import type { RowLoadProgress } from './rowWorkbenchStore'
+import type { RowLoadProgress, RowReviewSnapshot, RowWriteProgress } from './rowWorkbenchStore'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -73,6 +73,33 @@ const normalizeWorkbench = (value: WorkbenchData): WorkbenchData => {
 }
 
 export type WorkbenchLoadProfile = 'startup' | 'full'
+export type WorkbenchReview = { data: WorkbenchData; storedData: WorkbenchData; revision: string; snapshot: RowReviewSnapshot }
+export type WorkbenchBatchReceipt = { state: 'missing' | 'uncommitted' | 'committed'; requestId: string; expectedRevision?: string; fingerprint?: string; operationCount?: number; resultRevision?: string }
+export async function readWorkbenchForReview(userId: string, signal?: AbortSignal, onProgress?: (progress: RowLoadProgress) => void): Promise<WorkbenchReview> {
+  if (!rowStorageEnabled) throw new Error('Cloud review requires rows-v1 storage')
+  const snapshot = await (await rowStore(userId)).readOnly({ signal, onProgress })
+  const storedData = snapshot.data as unknown as WorkbenchData
+  return { data: normalizeWorkbench(storedData), storedData, revision: snapshot.revision, snapshot }
+}
+export async function adoptWorkbenchReview(userId: string, review: WorkbenchReview, verifyRevision = false, signal?: AbortSignal) {
+  if (!rowStorageEnabled) throw new Error('Cloud review requires rows-v1 storage')
+  await (await rowStore(userId)).adoptReview(review.snapshot, verifyRevision, signal)
+}
+export async function getWorkbenchPendingRequest(userId: string) {
+  return (await rowStore(userId)).getPendingRequest()
+}
+export async function readWorkbenchBatchReceipt(userId: string, requestId: string, signal?: AbortSignal): Promise<WorkbenchBatchReceipt> {
+  if (!rowStorageEnabled) throw new Error('Batch receipt review requires rows-v1 storage')
+  const request = supabase.from('workbench_row_batches')
+    .select('request_id,expected_revision,fingerprint,operation_count,result_revision')
+    .eq('user_id', userId).eq('request_id', requestId)
+  const { data, error } = await (signal ? request.abortSignal(signal) : request).maybeSingle()
+  if (error) throw error
+  if (!data) return { state: 'missing', requestId }
+  return { state: data.result_revision == null ? 'uncommitted' : 'committed', requestId,
+    expectedRevision: String(data.expected_revision), fingerprint: data.fingerprint,
+    operationCount: data.operation_count, resultRevision: data.result_revision == null ? undefined : String(data.result_revision) }
+}
 export async function loadWorkbenchSnapshot(userId: string, options: { signal?: AbortSignal; initialize?: boolean; profile?: WorkbenchLoadProfile; onProgress?: (progress: RowLoadProgress) => void } = {}): Promise<{ data: WorkbenchData; storedData: WorkbenchData; complete: boolean }> {
   if (rowStorageEnabled) {
     const profile = options.profile || 'full'
@@ -102,18 +129,18 @@ export async function loadWorkbench(userId: string): Promise<WorkbenchData> {
   return (await loadWorkbenchSnapshot(userId)).data
 }
 
-export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
+export async function saveWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal, onProgress?: (progress: RowWriteProgress) => void): Promise<void> {
   const previousWrite = accountWrites.get(userId) || Promise.resolve()
   const write = previousWrite.catch(() => {}).then(() => {
     signal?.throwIfAborted()
-    return persistWorkbench(userId, data, signal)
+    return persistWorkbench(userId, data, signal, onProgress)
   })
   accountWrites.set(userId, write)
   try { await write } finally { if (accountWrites.get(userId) === write) accountWrites.delete(userId) }
 }
 
-async function persistWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal): Promise<void> {
-  if (rowStorageEnabled) { await (await rowStore(userId)).save(data, signal); return }
+async function persistWorkbench(userId: string, data: WorkbenchData, signal?: AbortSignal, onProgress?: (progress: RowWriteProgress) => void): Promise<void> {
+  if (rowStorageEnabled) { await (await rowStore(userId)).save(data, signal, onProgress); return }
   let previous = storedSnapshots.get(userId)
   if (!previous) {
     // Recovery after a failed initial read must establish a cloud baseline;

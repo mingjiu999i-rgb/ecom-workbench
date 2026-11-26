@@ -14,8 +14,18 @@ export type RowTransport = {
   commit: (id: string, signal?: AbortSignal) => Promise<string>
 }
 export type RowLoadProgress = { pages: number }
+export type RowWriteProgress = { phase: 'begin' | 'stage'; confirmedChunks: number; totalChunks: number }
 export type RowLoadOptions = { signal?: AbortSignal; profile?: RowLoadProfile; concurrency?: number; onProgress?: (progress: RowLoadProgress) => void }
+export type RowReviewSnapshot = { data: Record<string, unknown>; revision: string; rows: StoredRow[] }
 const conflict = () => Object.assign(new Error('Cloud data changed; local changes retained'), { code: '40001' })
+const businessConflict = (error: unknown) => {
+  const item = error as { code?: string; status?: number } | null
+  return !!item && (item.code === 'PT409' || item.code === '40001' || item.status === 409)
+}
+const writeFailure = (error: unknown, phase: 'begin' | 'stage' | 'commit') => {
+  const item = error as { code?: string; status?: number; message?: string } | null
+  return Object.assign(new Error(item?.message || String(error)), { code: item?.code, status: item?.status, writePhase: phase, cause: error })
+}
 const validRevision = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 const cursorOf = (row: StoredRow) => [row.collection, row.scope, row.record_key]
 const appendRows = (target: StoredRow[], source: StoredRow[]) => {
@@ -99,10 +109,44 @@ async function readFullRows(transport: RowTransport, signal?: AbortSignal, concu
 export function createRowWorkbenchStore(transport: RowTransport) {
   let baseline: StoredRow[] | null = null, revision = '', queue = Promise.resolve()
   let pending: { rows: StoredRow[]; changes: RowChange[]; chunks: RowChange[][]; nextChunk: number; offset: number; id: string; revision: string; fingerprint: string } | null = null
-  async function finish(signal?: AbortSignal) {
+  let frozen = false
+  const verified = new WeakSet<RowReviewSnapshot>(), abandoned: { id: string; revision: string; fingerprint: string; count: number }[] = []
+  async function readVerified(options: RowLoadOptions = {}): Promise<RowReviewSnapshot> {
+    const { signal, profile = 'full', concurrency = 4, onProgress } = options
+    const before = await transport.head(signal)
+    if (before.mode !== 'rows' || !validRevision(before.revision)) throw conflict()
+    let pages = 0
+    const reportPage = async (request: Promise<StoredRow[]>) => {
+      const page = await request
+      signal?.throwIfAborted()
+      onProgress?.({ pages: ++pages })
+      return page
+    }
+    const reader: RowTransport = { ...transport,
+      page: (after, requestSignal) => reportPage(transport.page(after, requestSignal)),
+      collectionPage: transport.collectionPage
+        ? (collection, after, requestSignal) => reportPage(transport.collectionPage!(collection, after, requestSignal))
+        : undefined,
+    }
+    const rows = profile === 'startup' && transport.startupPage
+      ? await readPages(after => reportPage(transport.startupPage!(after, signal)), signal)
+      : await readFullRows(reader, signal, concurrency)
+    signal?.throwIfAborted()
+    const after = await transport.head(signal)
+    signal?.throwIfAborted()
+    if (after.mode !== 'rows' || before.revision !== after.revision) throw conflict()
+    const snapshot = { data: structuredClone(decodeWorkbenchRows(rows)), revision: before.revision, rows }
+    verified.add(snapshot)
+    return snapshot
+  }
+  async function finish(signal?: AbortSignal, onProgress?: (progress: RowWriteProgress) => void) {
     const request = pending!
     signal?.throwIfAborted()
-    let saved = await transport.begin({ id: request.id, revision: request.revision, fingerprint: request.fingerprint, count: request.changes.length }, signal)
+    let saved: string | null
+    try { saved = await transport.begin({ id: request.id, revision: request.revision, fingerprint: request.fingerprint, count: request.changes.length }, signal) }
+    catch (error) { if (businessConflict(error)) frozen = true; throw writeFailure(error, 'begin') }
+    if (saved !== null && !validRevision(saved)) throw new Error('Cloud save acknowledgement missing revision')
+    onProgress?.({ phase: 'begin', confirmedChunks: request.nextChunk, totalChunks: request.chunks.length })
     if (saved === null) {
       while (request.nextChunk < request.chunks.length) {
         const chunk = request.chunks[request.nextChunk]
@@ -112,13 +156,15 @@ export function createRowWorkbenchStore(transport: RowTransport) {
           // A separately approved server compaction fix may need to normalize
           // an older prefix. Size failures are not automatically retried.
           if ((error as { code?: string } | null)?.code === '54000') { request.nextChunk = 0; request.offset = 0 }
-          throw error
+          throw writeFailure(error, 'stage')
         }
         // Advance only after acknowledgement. A lost reply replays just this
         // chunk under the same ID; the server still verifies its exact payload.
         request.offset += chunk.length; request.nextChunk++
+        onProgress?.({ phase: 'stage', confirmedChunks: request.nextChunk, totalChunks: request.chunks.length })
       }
-      saved = await transport.commit(request.id, signal)
+      try { saved = await transport.commit(request.id, signal) }
+      catch (error) { if (businessConflict(error)) frozen = true; throw writeFailure(error, 'commit') }
     }
     if (!validRevision(saved)) throw new Error('Cloud save acknowledgement missing revision')
     baseline = request.rows; revision = saved; pending = null
@@ -128,46 +174,38 @@ export function createRowWorkbenchStore(transport: RowTransport) {
       const normalized: RowLoadOptions = typeof AbortSignal !== 'undefined' && options instanceof AbortSignal
         ? { signal: options as AbortSignal }
         : options as RowLoadOptions
-      const { signal, profile = 'full', concurrency = 4, onProgress } = normalized
       const operation = queue.catch(() => {}).then(async () => {
         if (pending) throw new Error('Unconfirmed changes must be resolved before reloading')
-        const before = await transport.head(signal)
-        if (before.mode !== 'rows' || !validRevision(before.revision)) throw conflict()
-        let pages = 0
-        const reportPage = async (request: Promise<StoredRow[]>) => {
-          const page = await request
-          signal?.throwIfAborted()
-          onProgress?.({ pages: ++pages })
-          return page
-        }
-        const reader: RowTransport = { ...transport,
-          page: (after, requestSignal) => reportPage(transport.page(after, requestSignal)),
-          collectionPage: transport.collectionPage
-            ? (collection, after, requestSignal) => reportPage(transport.collectionPage!(collection, after, requestSignal))
-            : undefined,
-        }
-        const rows = profile === 'startup' && transport.startupPage
-          ? await readPages(after => reportPage(transport.startupPage!(after, signal)), signal)
-          : await readFullRows(reader, signal, concurrency)
-        signal?.throwIfAborted()
-        const after = await transport.head(signal)
-        signal?.throwIfAborted()
-        if (after.mode !== 'rows' || before.revision !== after.revision) throw conflict()
-        const data = decodeWorkbenchRows(rows)
+        const snapshot = await readVerified(normalized)
         // A startup view is intentionally incomplete and must never become a
         // write baseline. Only a verified full snapshot can be diffed/saved.
-        if (profile === 'full') { baseline = rows; revision = before.revision }
-        return structuredClone(data)
+        if ((normalized.profile || 'full') === 'full') { baseline = snapshot.rows; revision = snapshot.revision }
+        return snapshot.data
       })
       queue = operation.then(() => {}, () => {})
       return operation
     },
-    save(data: object, signal?: AbortSignal): Promise<void> {
+    // This read bypasses the write queue and never adopts a write baseline.
+    readOnly(options: RowLoadOptions = {}) { return readVerified({ ...options, profile: 'full' }) },
+    getPendingRequest() { return pending && { id: pending.id, revision: pending.revision, fingerprint: pending.fingerprint, count: pending.changes.length, nextChunk: pending.nextChunk, offset: pending.offset } },
+    getAbandonedRequests() { return abandoned.map(item => ({ ...item })) },
+    async adoptReview(snapshot: RowReviewSnapshot, verifyRevision = false, signal?: AbortSignal) {
+      if (!verified.has(snapshot)) throw new Error('Unverified cloud review snapshot')
+      await queue.catch(() => {})
+      if (verifyRevision) {
+        const head = await transport.head(signal)
+        if (head.mode !== 'rows' || head.revision !== snapshot.revision) throw conflict()
+      }
+      if (pending) abandoned.push({ id: pending.id, revision: pending.revision, fingerprint: pending.fingerprint, count: pending.changes.length })
+      baseline = snapshot.rows; revision = snapshot.revision; pending = null; frozen = false
+    },
+    save(data: object, signal?: AbortSignal, onProgress?: (progress: RowWriteProgress) => void): Promise<void> {
       const snapshot = structuredClone(data)
       const operation = queue.catch(() => {}).then(async () => {
         signal?.throwIfAborted()
+        if (frozen) throw Object.assign(new Error('Conflicted request is frozen until cloud review'), { code: 'PT409', writePhase: 'begin' })
         if (!baseline) throw new Error('Load complete row baseline before saving')
-        if (pending) await finish(signal)
+        if (pending) await finish(signal, onProgress)
         const rows = encodeWorkbenchRows(snapshot), changes = diffWorkbenchRows(baseline, rows)
         if (!changes.length) return
         const chunks = chunkRowChanges(changes)
@@ -175,7 +213,7 @@ export function createRowWorkbenchStore(transport: RowTransport) {
         const bytes = new TextEncoder().encode(JSON.stringify(changes))
         const fingerprint = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(value => value.toString(16).padStart(2, '0')).join('')
         pending = { rows, changes, chunks, nextChunk: 0, offset: 0, id: crypto.randomUUID(), revision, fingerprint }
-        await finish(signal)
+        await finish(signal, onProgress)
       })
       queue = operation
       return operation
@@ -186,8 +224,8 @@ export function createRowWorkbenchStore(transport: RowTransport) {
 // Caller supplies the already authenticated anon-key client. No elevated key.
 export function supabaseRowTransport(client: SupabaseClient, userId: string): RowTransport {
   const rpc = async (name: string, args: object, signal?: AbortSignal) => {
-    const query = client.rpc(name, args), { data, error } = await (signal ? query.abortSignal(signal) : query)
-    if (error) throw error
+    const query = client.rpc(name, args), { data, error, status } = await (signal ? query.abortSignal(signal) : query)
+    if (error) throw Object.assign(new Error(error.message), error, { status })
     return data
   }
   const mapRows = (data: unknown) => {

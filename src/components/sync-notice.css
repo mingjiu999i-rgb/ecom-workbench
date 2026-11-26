@@ -1,4 +1,6 @@
 .sync-notice { display: flex; align-items: flex-start; gap: 12px; margin: 18px 38px 0; padding: 16px 18px; border: 1px solid #efd8b3; border-radius: 12px; color: #996323; background: #fff9ef; }
+.sync-notice.backup-failed { border-color: #bc453b; color: #8f2420; background: #fff1ef; }
+.sync-notice-backup { font-weight: 700; }
 .sync-notice > svg { flex-shrink: 0; margin-top: 2px; }
 .sync-notice-body { flex: 1; min-width: 0; }
 .sync-notice-body strong { font-size: 13px; }

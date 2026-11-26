@@ -81,7 +81,7 @@ test('failed local backup does not block cloud save, and is reported if cloud sa
   const { manager } = setup(async () => { if (fail) throw { code: '42501', message: 'permission denied' } }, { storage: { write: async () => { throw new Error('IndexedDB unavailable') }, remove: async () => {} } })
   manager.enqueue({ value: 1 })
   await until(() => manager.getState().status === 'error')
-  assert.ok(manager.getState().backupError.includes('备份不可用'))
+  assert.ok(manager.getState().backupError.includes('本机备份失败'))
   fail = false
   manager.retry()
   await until(() => manager.getState().status === 'saved')

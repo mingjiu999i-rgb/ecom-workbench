@@ -1,12 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Cloud, LoaderCircle, LockKeyhole, Mail } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
-import { isSupabaseConfigured, loadWorkbenchSnapshot, saveWorkbench, supabase } from '../services/supabase'
+import { adoptWorkbenchReview, getWorkbenchPendingRequest, isSupabaseConfigured, loadWorkbenchSnapshot, readWorkbenchBatchReceipt, readWorkbenchForReview, saveWorkbench, supabase, type WorkbenchBatchReceipt, type WorkbenchReview } from '../services/supabase'
 import type { WorkbenchData } from '../types/models'
 import { isActiveProductLink } from '../utils/selectors'
 import { acknowledgeWorkbenchDraft, readWorkbenchDraft, removeWorkbenchDraft, writeWorkbenchDraft } from '../services/workbenchDrafts'
-import { createWorkbenchSync, describeSyncError, type PendingDraft, type SyncState } from '../utils/workbenchSync'
-import { inspectWorkbenchRecovery, isResolvedDraft, sameStoredDocument, type recoveryDifferences } from '../utils/workbenchRecovery'
+import { createWorkbenchSync, describeSyncError, type PendingDraft, type SyncSession, type SyncState } from '../utils/workbenchSync'
+import { inspectWorkbenchRecovery, isResolvedDraft, recoveryDifferences, sameStoredDocument } from '../utils/workbenchRecovery'
 import { createWorkbenchReadBudget } from '../utils/workbenchReadBudget'
 
 type SyncStatus = 'saved' | 'saving' | 'error'
@@ -16,11 +16,15 @@ interface WorkbenchContextValue {
   userEmail: string
   signOut: () => Promise<void>
   syncStatus: SyncStatus
+  syncSession: SyncSession
   syncError: string
   syncErrorDetail: string
   backupError: string
   cleanupError: string
   retrySync: () => void
+  openSyncReview: () => void
+  reviewBusy: boolean
+  reviewIssue: string
   complete: boolean
   fullLoadError: string
   ensureFullData: () => Promise<boolean>
@@ -33,10 +37,13 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
   const [data, setData] = useState<WorkbenchData | null>(null)
   const [loadError, setLoadError] = useState('')
-  const [syncState, setSyncState] = useState<SyncState>({ status: 'saved', error: null, backupError: '' })
+  const [syncState, setSyncState] = useState<SyncState>({ status: 'saved', session: 'idle', error: null, backupError: '' })
   const [recovery, setRecovery] = useState<PendingDraft<WorkbenchData> | null>(null)
   const [differences, setDifferences] = useState<ReturnType<typeof recoveryDifferences>>([])
   const [recoveryIssue, setRecoveryIssue] = useState('')
+  const [syncReview, setSyncReview] = useState<{ cloud: WorkbenchReview; receipt: WorkbenchBatchReceipt | null; stale: boolean } | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewIssue, setReviewIssue] = useState('')
   const [resolving, setResolving] = useState(false)
   const [complete, setComplete] = useState(true)
   const [fullLoadError, setFullLoadError] = useState('')
@@ -48,6 +55,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const completeRef = useRef(true)
   const hydrateRef = useRef<Promise<boolean> | null>(null)
   const hydrateController = useRef<AbortController | null>(null)
+  const reviewController = useRef<AbortController | null>(null)
   const ownerRef = useRef<string | undefined>(undefined)
   const loadController = useRef<AbortController | null>(null)
   const dataRef = useRef<WorkbenchData | null>(null)
@@ -79,9 +87,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setLoadPages(0)
     setDifferences([]); setRecoveryIssue(''); setResolving(false)
     setLoadError('')
-    setSyncState({ status: 'saved', error: null, backupError: '' })
+    reviewController.current?.abort()
+    reviewController.current = null
+    setSyncReview(null); setReviewBusy(false); setReviewIssue('')
+    setSyncState({ status: 'saved', session: 'idle', error: null, backupError: '' })
     const manager = createWorkbenchSync<WorkbenchData>({
-      userId, save: (value, signal) => saveWorkbench(userId, value, signal),
+      userId, save: (value, signal, onProgress) => saveWorkbench(userId, value, signal, onProgress),
       storage: { write: writeWorkbenchDraft, remove: removeWorkbenchDraft, acknowledge: acknowledgeWorkbenchDraft },
       notify: state => { if (active) setSyncState(state) },
     })
@@ -147,8 +158,13 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       }
     }
     void load()
-    const online = () => manager.retry()
-    const beforeUnload = (event: BeforeUnloadEvent) => { if (manager.hasPending()) { event.preventDefault(); event.returnValue = '' } }
+    const online = () => manager.retry(false)
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      const state = manager.getState()
+      if (manager.hasPending() || state.backupError && ['conflict', 'unconfirmed'].includes(state.session)) {
+        event.preventDefault(); event.returnValue = ''
+      }
+    }
     window.addEventListener('online', online)
     window.addEventListener('beforeunload', beforeUnload)
     return () => {
@@ -157,6 +173,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       fullReadBudget?.dispose()
       controller.abort()
       hydrateController.current?.abort()
+      reviewController.current?.abort()
       if (loadController.current === controller) loadController.current = null
       manager.dispose()
       if (syncRef.current === manager) syncRef.current = null
@@ -209,6 +226,76 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     void ensureFullData().then(ready => { if (ready) applyUpdate(recipe) })
   }, [applyUpdate, ensureFullData])
 
+  const openSyncReview = useCallback(() => {
+    if (!userId || ownerRef.current !== userId || reviewController.current) return
+    const sessionState = syncRef.current?.getState().session
+    if (!sessionState || !['conflict', 'capacity', 'unconfirmed'].includes(sessionState)) return
+    const controller = new AbortController()
+    reviewController.current = controller
+    setReviewBusy(true); setReviewIssue(''); setSyncReview(null)
+    void (async () => {
+      let receipt: WorkbenchBatchReceipt | null = null
+      if (sessionState === 'unconfirmed') {
+        const request = await getWorkbenchPendingRequest(userId)
+        if (!request) throw new Error('无法取得原请求 ID，结果仍未确认；请保留并导出本机备份。')
+        receipt = await readWorkbenchBatchReceipt(userId, request.id, controller.signal)
+        if (receipt.state !== 'missing' && (receipt.expectedRevision !== request.revision
+          || receipt.fingerprint !== request.fingerprint || receipt.operationCount !== request.count)) {
+          throw new Error('批次回执与原请求不一致，结果仍未确认；请保留本机备份。')
+        }
+      }
+      const budget = createWorkbenchReadBudget(controller)
+      try {
+        const cloud = await readWorkbenchForReview(userId, controller.signal, budget.progress)
+        if (ownerRef.current === userId && !controller.signal.aborted) setSyncReview({ cloud, receipt, stale: false })
+      } finally { budget.dispose() }
+    })().catch(error => {
+      if (ownerRef.current === userId && !controller.signal.aborted) setReviewIssue(`只读核对未完成：${describeSyncError(error).detail}。原请求与本机修改仍保留。`)
+    }).finally(() => {
+      if (reviewController.current === controller) reviewController.current = null
+      if (ownerRef.current === userId) setReviewBusy(false)
+    })
+  }, [userId])
+
+  const keepReviewedCloud = useCallback(() => {
+    if (!userId || !syncReview || syncReview.stale || resolving) return
+    if (!window.confirm('保留云端会放弃本次本机修改并清理本机备份。请确认已核对差异并导出备份。确定保留云端吗？')) return
+    setResolving(true); setReviewIssue('')
+    void (async () => {
+      await adoptWorkbenchReview(userId, syncReview.cloud, true)
+      const manager = syncRef.current
+      if (!manager) throw new Error('同步会话已结束')
+      const cleared = await manager.keepCloud()
+      dataRef.current = syncReview.cloud.data
+      setData(syncReview.cloud.data); completeRef.current = true; setComplete(true)
+      setSyncReview(null)
+      if (!cleared) setReviewIssue('已保留云端，但本机备份清理未完成。请在同步提示中重试清理。')
+    })().catch(error => {
+      const item = error as { code?: string } | null
+      if (item?.code === '40001') {
+        setSyncReview(review => review && { ...review, stale: true })
+        setReviewIssue('云端又有更新，尚未清理本机备份。请重新读取云端核对。')
+      } else setReviewIssue(`保留云端未完成：${describeSyncError(error).detail}`)
+    }).finally(() => setResolving(false))
+  }, [userId, syncReview, resolving])
+
+  const restoreReviewedLocal = useCallback(() => {
+    if (!userId || !syncReview || syncReview.stale || resolving) return
+    if (!window.confirm('将以当前本机修改建立新请求并同步云端。请确认已核对差异并导出备份。确定继续吗？')) return
+    setResolving(true); setReviewIssue('')
+    void (async () => {
+      await adoptWorkbenchReview(userId, syncReview.cloud, true)
+      if (!syncRef.current?.resumeFromReview()) throw new Error('原本机修改已不在同步会话中')
+      setSyncReview(null)
+    })().catch(error => {
+      const item = error as { code?: string } | null
+      if (item?.code === '40001') {
+        setSyncReview(review => review && { ...review, stale: true })
+        setReviewIssue('云端又有更新，尚未发出新写请求。请重新读取云端核对。')
+      } else setReviewIssue(`恢复本机修改未开始：${describeSyncError(error).detail}`)
+    }).finally(() => setResolving(false))
+  }, [userId, syncReview, resolving])
+
   useEffect(() => {
     if (!data || loadedOwner !== userId) return
     const context = document.modelContext
@@ -239,6 +326,20 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     {recoveryIssue && <p className="recovery-error" role="alert">{recoveryIssue}</p>}
     {loadDetail && <details><summary>查看读取错误详情</summary><pre>{loadDetail}</pre></details>}
     <div className="draft-recovery-actions"><button className="button secondary" onClick={() => downloadWorkbenchBackup(recovery.data)}>导出本机备份</button>{!data && !cloudLoading && <button className="button secondary" disabled={resolving} onClick={() => setLoadAttempt(attempt => attempt + 1)}>重新读取云端</button>}<button className="button secondary" disabled={resolving || cloudLoading || !data || !complete} onClick={() => { if (!window.confirm('恢复会用这份本机备份替换云端工作台内容。请确认已核对差异，建议先导出备份。确定恢复吗？')) return; const value = recovery.data; dataRef.current = value; setData(value); completeRef.current = true; setComplete(true); setLoadError(''); setRecovery(null); syncRef.current?.enqueue(value) }}>恢复本机修改并同步</button>{data && complete && <button className="button secondary" disabled={resolving} onClick={async () => { setResolving(true); setRecoveryIssue(''); const resolved = await syncRef.current?.clearResolvedDraft(recovery.id, 'kept-cloud'); if (resolved) setRecovery(null); else setRecoveryIssue('无法记录选择或清理本机备份，备份仍保留。请导出后重试，不会悄悄丢弃修改。'); setResolving(false) }}>{resolving ? '正在记录选择…' : '保留云端并清理本机备份'}</button>}</div></div>
+  if (syncReview && data) {
+    const changed = recoveryDifferences(data, syncReview.cloud.storedData)
+    return <div className="state-page"><Cloud size={30} /><strong>核对本机修改与云端</strong>
+      <span>云端版本 {syncReview.cloud.revision}。原写请求保持冻结；只读核对未更改写入基线或服务端批次。</span>
+      {syncReview.receipt && <p role="status">原请求回执：{syncReview.receipt.state === 'committed' ? `已提交，版本 ${syncReview.receipt.resultRevision}` : syncReview.receipt.state === 'uncommitted' ? '存在未提交批次' : '批次不存在或已被清理'}。仍须以完整数据差异核对当前本机修改。</p>}
+      {syncState.backupError && <p className="recovery-error" role="alert">{syncState.backupError}</p>}
+      {changed.length ? <ul className="recovery-differences" aria-label="本机与云端差异">{changed.map(item => <li key={item.key}><strong>{item.label}</strong><span>{item.localCount != null || item.cloudCount != null ? `本机 ${item.localCount ?? '未记录'} 条 / 云端 ${item.cloudCount ?? '未记录'} 条，内容不同` : '保存内容或字段不同'}</span></li>)}</ul> : <p>本机修改与本次核对的云端快照内容一致。</p>}
+      {reviewIssue && <p className="recovery-error" role="alert">{reviewIssue}</p>}
+      <div className="draft-recovery-actions"><button className="button secondary" onClick={() => downloadWorkbenchBackup(dataRef.current || data)}>导出本机备份</button>
+        <button className="button secondary" disabled={resolving || reviewBusy} onClick={openSyncReview}>重新读取云端核对</button>
+        <button className="button secondary" disabled={resolving || syncReview.stale} onClick={keepReviewedCloud}>保留云端并清理本机备份</button>
+        <button className="button secondary" disabled={resolving || syncReview.stale} onClick={restoreReviewedLocal}>用本机修改恢复</button>
+        <button className="button secondary" disabled={resolving} onClick={() => setSyncReview(null)}>暂不决定</button></div></div>
+  }
   if (loadError) return <><StateScreen title="无法读取云端数据" message={loadError} action="重新加载" onAction={() => window.location.reload()} />{loadDetail && <details><summary>查看读取错误详情</summary><pre>{loadDetail}</pre></details>}</>
   if (!data) return <FullScreenLoading label="正在同步工作台数据…" />
 
@@ -248,11 +349,15 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     userEmail: session.user.email || '已登录',
     signOut: async () => { await supabase.auth.signOut() },
     syncStatus: syncState.status,
+    syncSession: syncState.session,
     syncError: syncState.error?.message || '',
     syncErrorDetail: syncState.error?.detail || '',
     backupError: syncState.backupError,
     cleanupError: syncState.cleanupError || '',
     retrySync: () => syncRef.current?.retry(),
+    openSyncReview,
+    reviewBusy,
+    reviewIssue,
     complete,
     fullLoadError,
     ensureFullData,

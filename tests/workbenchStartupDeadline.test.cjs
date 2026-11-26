@@ -10,23 +10,24 @@ const end=source.indexOf('\n  }, [userId, loadAttempt])',start)
 assert(start>=0&&end>start)
 const body=source.slice(start+'  useEffect(() => {'.length,end)
 const compiled=ts.transpileModule('function runAccountLoad(){'+body+'\n}',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
-async function harness({draft=true,delay=45000,error=null,different=false,progressEvery=0,progressUntil=Infinity}={}){
+async function harness({draft=true,delay=45000,error=null,different=false,progressEvery=0,progressUntil=Infinity,managerState=null}={}){
  let now=0,id=0,cleanup=0,request
- const timers=new Map(),state={},raw={clients:[],stores:[],products:[],productCosts:[],productLinks:[],skus:[],orders:[{id:'retained',unitCost:null,amount:12.34}]}
+ const timers=new Map(),handlers=new Map(),state={},raw={clients:[],stores:[],products:[],productCosts:[],productLinks:[],skus:[],orders:[{id:'retained',unitCost:null,amount:12.34}]}
  const local=draft?{id:'draft',userId:'owner',updatedAt:'2026-10-23T02:14:21Z',data:structuredClone(raw)}:null
  const before=JSON.stringify(local),context={AbortController,DOMException,console,userId:'owner',inspectWorkbenchRecovery,isResolvedDraft,describeSyncError}
  const setTimer=(fn,ms)=>{timers.set(++id,{at:now+ms,fn});return id}
- Object.assign(context,{setTimeout:setTimer,clearTimeout:n=>timers.delete(n),window:{addEventListener(){},removeEventListener(){}},
+ Object.assign(context,{setTimeout:setTimer,clearTimeout:n=>timers.delete(n),window:{addEventListener:name=>{},removeEventListener(){}},
   readWorkbenchDraft:async()=>local,writeWorkbenchDraft:async()=>{},removeWorkbenchDraft:async()=>{},acknowledgeWorkbenchDraft:async()=>{},saveWorkbench:async()=>{throw Error('Must not save during read')},
-  createWorkbenchSync:()=>({retry(){},hasPending:()=>false,dispose(){},clearResolvedDraft:async()=>{cleanup++;return true}}),
+  createWorkbenchSync:()=>({retry(){},hasPending:()=>!!managerState?.pending,getState:()=>managerState||{session:'idle',backupError:''},dispose(){},clearResolvedDraft:async()=>{cleanup++;return true}}),
   loadWorkbenchSnapshot:(_owner,options)=>{request=options;return new Promise((resolve,reject)=>{
    options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true})
    if(progressEvery)for(let elapsed=progressEvery;elapsed<delay&&elapsed<=progressUntil;elapsed+=progressEvery)setTimer(()=>{if(!options.signal.aborted)options.onProgress?.({pages:elapsed/progressEvery})},elapsed)
    setTimer(()=>error?reject(error):resolve({data:structuredClone(raw),storedData:different?{...raw,changed:true}:raw,complete:true}),delay)
   })},
  })
- for(const name of ['ownerRef','completeRef','hydrateRef','hydrateController','dataRef','syncRef','loadController'])context[name]={current:null}
- for(const name of ['Complete','FullLoadError','Data','Recovery','LoadedOwner','CloudLoading','LoadDetail','LoadPages','Differences','RecoveryIssue','Resolving','LoadError','SyncState'])context['set'+name]=value=>{state[name]=value}
+ context.window.addEventListener=(name,fn)=>handlers.set(name,fn)
+ for(const name of ['ownerRef','completeRef','hydrateRef','hydrateController','reviewController','dataRef','syncRef','loadController'])context[name]={current:null}
+ for(const name of ['Complete','FullLoadError','Data','Recovery','LoadedOwner','CloudLoading','LoadDetail','LoadPages','Differences','RecoveryIssue','Resolving','LoadError','SyncState','SyncReview','ReviewBusy','ReviewIssue'])context['set'+name]=value=>{state[name]=value}
  context.exports={}
  vm.createContext(context)
  vm.runInContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/utils/workbenchReadBudget.ts'),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,context)
@@ -34,7 +35,8 @@ async function harness({draft=true,delay=45000,error=null,different=false,progre
  const flush=async()=>{for(let n=0;n<12;n++)await Promise.resolve()}
  await flush()
  const advance=async ms=>{const target=now+ms;for(;;){let selected;for(const [n,t]of timers)if(t.at<=target&&(!selected||t.at<selected[1].at))selected=[n,t];if(!selected)break;now=selected[1].at;timers.delete(selected[0]);selected[1].fn();await flush()}now=target;await flush()}
- return{advance,state,local,before,get request(){return request},get cleanup(){return cleanup},dispose}
+ return{advance,state,local,before,get request(){return request},get cleanup(){return cleanup},dispose,
+  beforeUnload(){let prevented=false;const event={preventDefault(){prevented=true},returnValue:null};handlers.get('beforeunload')(event);return{prevented,returnValue:event.returnValue}}}
 }
 test('a pending draft survives 30 seconds and is compared only after a healthy complete read',async()=>{
  const h=await harness();assert.equal(h.request.profile,'full')
@@ -63,6 +65,15 @@ test('successful reads and disposal clear deadlines and ignore late progress cal
 test('no pending draft keeps the lightweight 30-second startup deadline',async()=>{
  const h=await harness({draft:false});assert.equal(h.request.profile,'startup');await h.advance(30001)
  assert.equal(h.request.signal.aborted,true);assert.match(h.state.LoadDetail,/30000/);assert.equal(h.cleanup,0);h.dispose()
+})
+
+test('conflict or unconfirmed memory edits with failed IndexedDB backup block closing the page',async()=>{
+ for(const session of ['conflict','unconfirmed']){
+  const h=await harness({managerState:{pending:true,session,backupError:'本机备份失败'}})
+  assert.equal(h.beforeUnload().prevented,true);assert.equal(h.beforeUnload().returnValue,'');h.dispose()
+ }
+ const safe=await harness({managerState:{pending:false,session:'idle',backupError:''}})
+ assert.equal(safe.beforeUnload().prevented,false);safe.dispose()
 })
 test('real differences and version conflicts still retain the draft without any save or cleanup',async()=>{
  for(const options of [{different:true},{error:{code:'40001',message:'Cloud data changed'}}]){

@@ -1,5 +1,6 @@
 export type SyncFailure = { message: string; detail: string; retryable: boolean; reconnecting?: boolean }
-export type SyncState = { status: 'saved' | 'saving' | 'error'; error: SyncFailure | null; backupError: string; cleanupError?: string }
+export type SyncSession = 'idle' | 'saving' | 'retrying' | 'conflict' | 'capacity' | 'unconfirmed'
+export type SyncState = { status: 'saved' | 'saving' | 'error'; session: SyncSession; error: SyncFailure | null; backupError: string; cleanupError?: string }
 export type DraftResolution = 'cloud-saved' | 'kept-cloud'
 export type PendingDraft<T> = { id: string; userId: string; updatedAt: string; data: T; resolution?: DraftResolution }
 export type DraftStorage<T> = {
@@ -27,20 +28,38 @@ export function describeSyncError(error: unknown): SyncFailure {
   return { message: '云端保存失败，待同步修改已保留。', detail, retryable: false }
 }
 
+export function createWorkbenchWriteBudget(controller: AbortController, idleMs = 90000, maximumMs = 600000, totalLimitMs = maximumMs) {
+  let idle: ReturnType<typeof setTimeout> | undefined, disposed = false, maximumExceeded = false
+  const maximum = setTimeout(() => {
+    maximumExceeded = true
+    controller.abort(new DOMException(`云端保存超过 ${totalLimitMs} ms 总上限，结果待核对`, 'TimeoutError'))
+  }, Math.max(0, maximumMs))
+  const progress = () => {
+    if (disposed || controller.signal.aborted) return
+    clearTimeout(idle)
+    idle = setTimeout(() => controller.abort(new DOMException(`云端保存连续 ${idleMs} ms 无进展，结果待核对`, 'TimeoutError')), idleMs)
+  }
+  const dispose = () => { disposed = true; clearTimeout(idle); clearTimeout(maximum) }
+  controller.signal.addEventListener('abort', dispose, { once: true })
+  progress()
+  return { progress, get maximumExceeded() { return maximumExceeded }, dispose() { dispose(); controller.signal.removeEventListener('abort', dispose) } }
+}
+
 export function createWorkbenchSync<T>(options: {
-  userId: string; save: (data: T, signal: AbortSignal) => Promise<void>
+  userId: string; save: (data: T, signal: AbortSignal, onProgress: () => void) => Promise<void>
   storage: DraftStorage<T>; notify: (state: SyncState) => void
-  debounceMs?: number; retryDelays?: number[]; timeoutMs?: number; random?: () => number
+  debounceMs?: number; retryDelays?: number[]; timeoutMs?: number; maximumMs?: number; random?: () => number
 }) {
   type Pending = PendingDraft<T> & { backup: Promise<void> }
   let pending: Pending | null = null, running = false, disposed = false, timer: ReturnType<typeof setTimeout> | undefined
   let active: AbortController | null = null, backupQueue = Promise.resolve(), backupError = ''
-  let state: SyncState = { status: 'saved', error: null, backupError: '' }
+  let session: SyncSession = 'idle', state: SyncState = { status: 'saved', session, error: null, backupError: '' }
   const cleanupPending = new Map<string, DraftResolution>()
   let cleanupQueue = Promise.resolve(), cleanupError = ''
-  let failureAttempts = 0, retryAt = 0, exhausted = false
-  const notify = (status: SyncState['status'], error: SyncFailure | null = null) => {
-    state = { status, error, backupError, cleanupError }
+  let failureAttempts = 0, retryAt = 0, exhausted = false, writeStartedAt: number | null = null
+  const notify = (status: SyncState['status'], error: SyncFailure | null = null, nextSession: SyncSession = session) => {
+    session = nextSession
+    state = { status, session, error, backupError, cleanupError }
     if (!disposed) options.notify(state)
   }
   const schedule = (delay: number) => {
@@ -64,68 +83,100 @@ export function createWorkbenchSync<T>(options: {
     return task
   }
   async function run() {
-    if (disposed || running || !pending) return
+    if (disposed || running || !pending || ['conflict', 'capacity', 'unconfirmed'].includes(session)) return
     running = true
     const current = pending
     const controller = new AbortController()
     active = controller
-    let timeout: ReturnType<typeof setTimeout> | undefined
+    let budget: ReturnType<typeof createWorkbenchWriteBudget> | undefined
+    let maximumReached = false
     let retryDelay: number | null = null
     try {
       await current.backup
       if (disposed || pending?.id !== current.id) return
-      // IndexedDB work does not consume the upload budget. Whole-workbench
-      // snapshots can take longer than 30 seconds on a slow connection.
-      const timeoutMs = options.timeoutMs ?? 120000
-      timeout = setTimeout(() => controller.abort(new DOMException(`云端保存请求超过 ${timeoutMs} ms`, 'TimeoutError')), timeoutMs)
-      await options.save(current.data, controller.signal)
-      failureAttempts = 0; retryAt = 0; exhausted = false
-      clearTimeout(timeout)
+      // IndexedDB work does not consume the upload budget. Acknowledged begin
+      // and stage calls reset the idle clock; retries share one total deadline.
+      if (writeStartedAt === null) writeStartedAt = Date.now()
+      const remaining = (options.maximumMs ?? 600000) - (Date.now() - writeStartedAt)
+      if (remaining <= 0) {
+        maximumReached = true
+        throw new DOMException(`云端保存超过 ${options.maximumMs ?? 600000} ms 总上限，结果待核对`, 'TimeoutError')
+      }
+      budget = createWorkbenchWriteBudget(controller, options.timeoutMs ?? 90000, remaining, options.maximumMs ?? 600000)
+      await options.save(current.data, controller.signal, budget.progress)
+      controller.signal.throwIfAborted()
+      failureAttempts = 0; retryAt = 0; exhausted = false; writeStartedAt = null
+      budget.dispose()
       if (disposed) return
       if (pending?.id === current.id) pending = null
       await clearResolvedDraft(current.id)
-      notify(pending ? 'saving' : 'saved')
+      notify(pending ? 'saving' : 'saved', null, pending ? 'saving' : 'idle')
     } catch (error) {
       if (disposed) return
       const failure = describeSyncError(controller.signal.aborted ? controller.signal.reason : error)
-      if (pending?.id !== current.id && !failure.retryable) notify('saving')
+      const item = error as { code?: string; status?: number; writePhase?: string } | null
+      const conflict = (item?.writePhase === 'begin' || item?.writePhase === 'commit')
+        && (item.code === 'PT409' || item.code === '40001' || item.status === 409)
+      const capacity = item?.writePhase === 'stage' && item.code === '54000'
+      if (conflict) { exhausted = true; notify('error', failure, 'conflict') }
+      else if (capacity) { exhausted = true; notify('error', failure, 'capacity') }
+      else if (pending?.id !== current.id && !failure.retryable) notify('saving', null, 'saving')
       else {
         // PostgREST may wrap the fetch rejection; retain our actual timeout
         // reason so diagnostics do not degrade to an unexplained AbortError.
         // A database restart can take longer than the ordinary short retry
         // window. Keep the draft pending through schema-cache reconstruction.
         const delays = options.retryDelays ?? (failure.reconnecting ? [1000, 2000, 4000, 8000, 16000] : [1000, 2000])
-        if (failure.retryable && failureAttempts < delays.length) {
+        if (failure.retryable && !maximumReached && !budget?.maximumExceeded && failureAttempts < delays.length) {
           const base = delays[failureAttempts++]
           // Equal jitter avoids synchronized retries while keeping a finite cap.
           retryDelay = options.retryDelays ? base : Math.floor(base * (0.5 + 0.5 * (options.random ?? Math.random)()))
           retryAt = Date.now() + retryDelay
-          notify('saving', failure)
-        } else { exhausted = failure.retryable; notify('error', failure) }
+          notify('saving', failure, 'retrying')
+        } else { exhausted = failure.retryable; notify('error', failure, failure.retryable ? 'unconfirmed' : 'idle') }
       }
     } finally {
-      clearTimeout(timeout)
+      budget?.dispose()
       active = null
       running = false
-      if (!disposed && pending && state.status !== 'error') schedule(retryDelay ?? 0)
+      if (!disposed && pending && state.status !== 'error' && !['conflict', 'capacity', 'unconfirmed'].includes(session)) schedule(retryDelay ?? 0)
     }
   }
   return {
     enqueue(data: T) {
       if (disposed) return
       const draft: PendingDraft<T> = { id: crypto.randomUUID(), userId: options.userId, updatedAt: new Date().toISOString(), data }
-      const backup = backupQueue.then(() => options.storage.write(draft)).then(() => { backupError = '' }).catch(() => { backupError = '本机自动备份不可用，请使用“导出未同步备份”保留修改。' })
+      const backup = backupQueue.then(() => options.storage.write(draft)).then(() => { backupError = ''; notify(state.status, state.error) }).catch(() => {
+        backupError = '本机备份失败，最近修改只在本页面内存中。请立即导出未同步备份。'
+        notify(state.status, state.error)
+      })
       backupQueue = backup
       pending = { ...draft, backup }
       // New edits remain durable but cannot reset a failed account's retry budget.
-      if (exhausted) { notify('error', state.error); return }
-      notify('saving')
+      if (exhausted || ['conflict', 'capacity', 'unconfirmed'].includes(session)) { notify('error', state.error); return }
+      notify('saving', null, 'saving')
       schedule(options.debounceMs ?? 300)
     },
-    retry() {
+    retry(manual = true) {
       if (disposed) return
-      if (pending) { failureAttempts = 0; retryAt = 0; exhausted = false; notify('saving'); schedule(0) }
+      if (session === 'conflict' || session === 'capacity') return
+      if (session === 'unconfirmed' && !manual) return
+      if (pending) { failureAttempts = 0; retryAt = 0; exhausted = false; writeStartedAt = null; notify('saving', null, 'saving'); schedule(0) }
       else for (const [id, resolution] of cleanupPending) void clearResolvedDraft(id, resolution)
+    },
+    async keepCloud() {
+      if (!pending || !['conflict', 'capacity', 'unconfirmed'].includes(session)) return false
+      const id = pending.id
+      clearTimeout(timer); pending = null; failureAttempts = 0; retryAt = 0; exhausted = false; writeStartedAt = null
+      notify('saved', null, 'idle')
+      await backupQueue
+      return clearResolvedDraft(id, 'kept-cloud')
+    },
+    resumeFromReview() {
+      if (!pending || !['conflict', 'capacity', 'unconfirmed'].includes(session)) return false
+      failureAttempts = 0; retryAt = 0; exhausted = false; writeStartedAt = null
+      notify('saving', null, 'saving'); schedule(0)
+      return true
     },
     clearResolvedDraft,
     hasPending() { return pending != null },
