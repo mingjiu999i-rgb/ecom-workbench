@@ -40,3 +40,44 @@ test('aborted page reads never establish a partial write baseline and can be ret
  assert.deepEqual(h.json(await store.load()),doc)
  await store.save(doc)
 })
+
+function largePagedTransport(doc){
+ const groups=new Map()
+ for(const row of h.encodeWorkbenchRows(doc)){
+  if(!groups.has(row.collection))groups.set(row.collection,[])
+  groups.get(row.collection).push(row)
+ }
+ const compare=(a,b)=>a.scope<b.scope?-1:a.scope>b.scope?1:a.record_key<b.record_key?-1:a.record_key>b.record_key?1:0
+ for(const group of groups.values())group.sort(compare)
+ return{
+  head:async()=>({mode:'rows',revision:'0'}),
+  collections:async()=>[...groups.keys()].sort(),
+  collectionPage:async(collection,after)=>{
+   const group=groups.get(collection)||[]
+   let low=0,high=group.length
+   if(after)while(low<high){
+    const middle=(low+high)>>>1
+    if(compare(group[middle],{scope:after[1],record_key:after[2]})<=0)low=middle+1
+    else high=middle
+   }
+   return group.slice(low,low+500)
+  },
+  page:async()=>{throw Error('Unexpected serial fallback')},
+  begin:async()=>{throw Error('Read must not write')},stage:async()=>{throw Error('Read must not write')},commit:async()=>{throw Error('Read must not write')},
+ }
+}
+
+for(const section of ['linkSalesOrders','funds'])test(`full paged read keeps all 150,001 ${section} records in order`,async()=>{
+ const count=150001,doc=h.fixture()
+ if(section==='linkSalesOrders')doc.linkSalesOrders=Array.from({length:count},(_,index)=>({
+  ...doc.linkSalesOrders[0],orderId:`order-${String(index).padStart(6,'0')}`,
+ }))
+ else doc.orderAccountingLedgers[0].funds=Array.from({length:count},(_,index)=>({
+  key:`fund-${String(index).padStart(6,'0')}`,income:index,expense:0,
+ }))
+ const loaded=await h.createRowWorkbenchStore(largePagedTransport(doc)).load({profile:'full'})
+ const actual=section==='linkSalesOrders'?loaded.linkSalesOrders:loaded.orderAccountingLedgers[0].funds
+ assert.equal(actual.length,count)
+ for(let index=0;index<count;index++)assert.equal(section==='linkSalesOrders'?actual[index].orderId:actual[index].key,
+  `${section==='linkSalesOrders'?'order':'fund'}-${String(index).padStart(6,'0')}`)
+})

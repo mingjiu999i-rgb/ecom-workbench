@@ -18,6 +18,9 @@ export type RowLoadOptions = { signal?: AbortSignal; profile?: RowLoadProfile; c
 const conflict = () => Object.assign(new Error('Cloud data changed; local changes retained'), { code: '40001' })
 const validRevision = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 const cursorOf = (row: StoredRow) => [row.collection, row.scope, row.record_key]
+const appendRows = (target: StoredRow[], source: StoredRow[]) => {
+  for (const row of source) target.push(row)
+}
 
 async function readPages(read: (after: string[] | null) => Promise<StoredRow[]>, signal?: AbortSignal) {
   const rows: StoredRow[] = []
@@ -26,7 +29,7 @@ async function readPages(read: (after: string[] | null) => Promise<StoredRow[]>,
     signal?.throwIfAborted()
     const page = await read(cursor)
     if (!page.length) break
-    rows.push(...page)
+    appendRows(rows, page)
     const next = cursorOf(page[page.length - 1])
     if (JSON.stringify(next) === JSON.stringify(cursor)) throw new Error('Row pagination did not advance')
     cursor = next
@@ -45,7 +48,7 @@ async function readFullRows(transport: RowTransport, signal?: AbortSignal, concu
   const metadata = collections.includes(metadataCollection)
     ? await readPages(after => transport.collectionPage!(metadataCollection, after, signal), signal)
     : []
-  rows.push(...metadata)
+  appendRows(rows, metadata)
   const scopes = metadata.map(row => row.record_key), knownScopes = new Set(scopes)
   const ledgerCollections = new Set(['ledger.orders', 'ledger.refunds', 'ledger.funds', 'ledger.promotions'])
   async function readScope(collection: string, scope: string, first: boolean) {
@@ -84,7 +87,7 @@ async function readFullRows(transport: RowTransport, signal?: AbortSignal, concu
     for (;;) {
       const index = next++
       if (index >= jobs.length) return
-      rows.push(...await jobs[index]())
+      appendRows(rows, await jobs[index]())
     }
   })
   await Promise.all(workers)
